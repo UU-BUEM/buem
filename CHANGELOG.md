@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.1.1] - 2026-09-24
+
+### Fixed
+
+- **`HOUSEHOLD_EQUIPMENT_TYPES` had drifted from occupancy's real equipment
+  registry** (`tests/test_equipment_selection.py::
+  test_equipment_registry_matches_occupancy`, caught by CI on the v6.1.0
+  push since `occupancy` is pinned to `@main`): 8 items occupancy's `main`
+  branch had added since buem's list was last synced --
+  `air_fryer`/`coffee_machine`/`ev_charger`/`laptop`/`robot_vacuum`/
+  `smart_speaker`/`streaming_stick`/`wifi_router` -- were missing from
+  `buem.config.building_registry.HOUSEHOLD_EQUIPMENT_TYPES` and from the
+  v4 draft schema's `equipment` property list (both hand-copied from
+  occupancy's registry, per that test's own docstring). Not caused by
+  v6.1.0's own changes -- pre-existing upstream drift, unrelated to this
+  release's diff, first surfaced by CI rather than the local mirror
+  because the local `buem_env`'s already-installed `occupancy` predated
+  the drift.
+
 ## [6.1.0] - 2026-09-24
 
 ### Added

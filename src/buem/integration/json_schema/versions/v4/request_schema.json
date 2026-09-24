@@ -184,7 +184,15 @@
             "tumble_dryer":        { "type": "boolean" },
             "washing_machine":     { "type": "boolean" },
             "washer_dryer":        { "type": "boolean" },
-            "lighting":            { "type": "boolean" }
+            "lighting":            { "type": "boolean" },
+            "air_fryer":           { "type": "boolean" },
+            "coffee_machine":      { "type": "boolean" },
+            "ev_charger":          { "type": "boolean" },
+            "laptop":              { "type": "boolean" },
+            "robot_vacuum":        { "type": "boolean" },
+            "smart_speaker":       { "type": "boolean" },
+            "streaming_stick":     { "type": "boolean" },
+            "wifi_router":         { "type": "boolean" }
           },
           "additionalProperties": false
         },

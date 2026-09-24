@@ -180,4 +180,6 @@ HOUSEHOLD_EQUIPMENT_TYPES = frozenset({
     "tv_1", "tv_2", "tv_3", "vcr_dvd", "tv_receiver_box", "hob", "oven",
     "microwave", "kettle", "small_cooking_group", "dish_washer",
     "tumble_dryer", "washing_machine", "washer_dryer", "lighting",
+    "air_fryer", "coffee_machine", "ev_charger", "laptop", "robot_vacuum",
+    "smart_speaker", "streaming_stick", "wifi_router",
 })

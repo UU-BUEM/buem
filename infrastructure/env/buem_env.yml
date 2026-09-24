@@ -58,10 +58,28 @@
 # it's installed there instead -- see Dockerfile's builder stage -- not in
 # this cross-platform env file. buem's own `pyproject.toml` still declares
 # it under the `server` extra for anyone installing outside conda.
+#
+# MKL_THREADING_LAYER below (see `variables:`): another instance of the
+# mkl-collides-with-another-package's-bundled-native-libs class of bug
+# noted above for cupy, this time with cvxpy's bundled solvers (coincbc
+# et al.) on Windows. Two Intel OpenMP runtimes active in the same
+# process -- MKL's own and one loaded by the other library -- is a
+# silent access-violation hazard: any BLAS matrix-matrix call (np.dot on
+# 2D arrays, np.cov, np.corrcoef; plain vector dot/mean/std are
+# unaffected) kills the interpreter outright, no Python exception, just
+# a bare process exit. Forcing MKL onto its sequential (non-OpenMP)
+# threading layer avoids the conflict. A conda `variables:` entry (set
+# automatically on `conda activate`, before the interpreter -- and hence
+# before numpy -- ever starts) is the only placement immune to import
+# order; setting this from Python code instead is fragile, since it only
+# works if that code runs before numpy's own first import anywhere in
+# the process, which nothing can guarantee for an arbitrary caller/script.
 name: buem_env
 channels:
   - conda-forge
   - defaults
+variables:
+  MKL_THREADING_LAYER: SEQUENTIAL
 dependencies:
   - python>=3.14
   - coincbc

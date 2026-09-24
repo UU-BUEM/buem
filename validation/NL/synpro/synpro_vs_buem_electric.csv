@@ -1,0 +1,5 @@
+n_days_compared,buem_annual_kWh,synpro_annual_kWh,annual_delta_pct,daily_correlation_R,daily_mean_Err_pct,quantity,label,num_persons,archetype,n_seeds
+365,2480.7,2700.7,-8.1,0.092,26.4,electricity,2FF,2.0,working_couple,10
+365,3329.4,4173.5,-20.2,0.028,30.2,electricity,4FF,4.0,family_with_children,10
+365,2275.9,2672.2,-14.8,-0.034,25.2,electricity,2-over65,2.0,retired_single,10
+365,1676.8,1319.5,27.1,0.035,50.7,electricity,1-under30,1.0,generic,10

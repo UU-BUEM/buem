@@ -1,0 +1,5 @@
+n_days_compared,buem_annual_kWh,synpro_annual_kWh,annual_delta_pct,daily_correlation_R,daily_mean_Err_pct,quantity,label,num_persons,archetype,n_seeds
+365,6529.1,3379.8,93.2,0.035,118.8,dhw,old_building_SFH,4.0,(default),10
+365,3211.8,7115.6,-54.9,-0.065,52.3,dhw,old_building_MFH,2.0,(default),10
+365,6529.1,3309.3,97.3,0.025,120.2,dhw,passive_SFH,4.0,(default),10
+365,3211.8,6796.0,-52.7,-0.105,50.0,dhw,passive_MFH,2.0,(default),10

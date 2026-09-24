@@ -25,7 +25,8 @@ and carries a one-year offset.
 
 Usage::
 
-    python scripts/compare_era_type_vs_cbs.py results/loenen_gm0200.parquet
+    python scripts/compare_era_type_vs_cbs.py results/loenen_gm0200.parquet \\
+        --csv validation/NL/cbs/loenen_era_vs_cbs.csv
     python scripts/compare_era_type_vs_cbs.py results/x.parquet --by-refurbishment
 """
 from __future__ import annotations

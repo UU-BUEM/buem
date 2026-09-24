@@ -17,6 +17,15 @@ dist/
 # Test coverage artifacts (pytest-cov)
 .coverage
 coverage.xml
+
+# results/ is scratch: batch-run source data and ad hoc outputs, never
+# meant to ship -- validation/ (see its own whitelist below) is the home
+# for anything from it that should be tracked. A blanket directory rule,
+# not just *.csv/*.parquet below, since those two coincidentally cover
+# most of what lands there but miss e.g. a plain .txt id list
+# (results/heeten_hourly_ids.txt slipped through this way).
+results/
+
 *.csv
 # Small, human-editable reference tables -- the *inputs* that change what
 # buem simulates, as opposed to the multi-MB extracted building tables the

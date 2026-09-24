@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.1.0] - 2026-09-24
+
+### Added
+
+- **`validation/<country>/{tabula,cbs,synpro}/`**: a dedicated home for
+  comparison *outputs* (not the batch-run source data they're computed
+  from, which stays in `results/`), one subfolder per independent
+  reference. Only `validation/NL/` populated so far.
+- **synPRO comparison, `scripts/compare_synpro_vs_buem.py`**: validates
+  buem's `elecLoad`/`heating_load`/`dhw_kWh` against synPRO's free,
+  no-login household profile set (checked into
+  `validation/NL/synpro/reference/`, CDLA-permissive 2.0). Supports
+  `--quantity {electricity,heating,dhw}` and `--n-seeds` (default 10,
+  averages that many buem runs with distinct explicit seeds to damp
+  single-realization stochastic noise before comparing against synPRO's
+  own single-realization reference file). Cooling and cooking have no
+  synPRO reference at all and are not offered as a `--quantity`.
+- `scripts/compare_typology_vs_buem.py` and `scripts/run_region_hourly.py`
+  (TABULA-method-vs-buem comparison and the hourly-retaining companion to
+  `buem.analysis.batch`), formalized into this release.
+
+### Fixed
+
+- **Windows-only `np.corrcoef`/`np.cov` crash** (no Python exception, bare
+  process exit): this environment's numpy build links MKL, and CVXPY's
+  bundled solvers load a separate copy of the Intel OpenMP runtime --
+  two active in one process is a silent access-violation hazard on any
+  BLAS matrix-matrix call. Fixed at the environment level:
+  `infrastructure/env/buem_env.yml` now sets `MKL_THREADING_LAYER:
+  SEQUENTIAL` via conda's `variables:` block (applied automatically by
+  `conda env create`/`conda activate`, independent of any script's
+  import order -- a per-module fix was tried first and found
+  insufficient, since it only helps if that module is guaranteed to
+  import before numpy, which nothing can guarantee for an arbitrary
+  caller). `src/buem/__init__.py` also sets it as the first statement
+  evaluated on `import buem`, as a backstop for processes that reach
+  buem's own code before numpy without going through `conda activate`.
+
 ## [6.0.0] - 2026-09-01
 
 Major bump: every simulated figure changes. Household occupancy is no

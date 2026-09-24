@@ -40,6 +40,11 @@ coverage.xml
 !src/buem/data/buildings/netherlands/Heeten/service_building_reference.csv
 !src/buem/data/buildings/netherlands/Heeten/refurbishment_measure_reference.csv
 !src/buem/data/reference/dhw_cooking_constants.csv
+# validation/ holds comparison *outputs* (small summary tables against
+# TABULA/CBS/synPRO references), not extracted building data -- the same
+# "must ship, not swallowed by the blanket rule" case as data/reference/
+# above. Without this, every file under validation/ is silently untracked.
+!validation/**/*.csv
 *.xlsx
 !src/buem/data/default_2016.xlsx
 # Demo_EN_12831-3_DHW_needs_2021-09-02.xlsx (src/buem/data/reference/) is

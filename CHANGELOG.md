@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.2.0] - 2026-09-29
+
+### Added
+
+- **`tests/test_pipeline_scaling.py`**: a graduated pytest scale ladder
+  (`tiny` -> `small` -> `medium` -> opt-in `large`/`xlarge`) over the
+  weather -> occupancy -> buem call chain, for characterizing
+  parallelization/data-management/bottleneck behavior across the three
+  UU-BUEM repos. `tiny`/`small`/`medium` run in a normal `pytest`
+  invocation (seconds to a few minutes, using bundled dummy/Heeten
+  fixtures); `large` (Loenen, ~25 min) and `xlarge` (an externally
+  supplied region, for genuinely multi-day sweeps across
+  region/year/provider/worker-count combinations) are opt-in via
+  `BUEM_RUN_LARGE_BENCH=1`/`BUEM_RUN_XLARGE_BENCH=1` so they never slow
+  down the default suite or CI.
+
+### Fixed
+
+- **`results/` was only partially gitignored** — the blanket `*.csv`/
+  `*.parquet` rules happened to cover most of its contents by extension,
+  but never targeted the directory itself, so a plain `.txt` id list
+  (`results/heeten_hourly_ids.txt`) fell through and showed up as
+  untracked. `.gitignore` now excludes `results/` as a whole directory;
+  `validation/` remains the tracked home for anything from it meant to
+  ship.
+
 ## [6.1.1] - 2026-09-24
 
 ### Fixed

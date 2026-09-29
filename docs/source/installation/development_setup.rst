@@ -83,7 +83,11 @@ the current full list):
     ├── test_building_types.py        # residential + services-building end-to-end
     ├── test_attribute_builder_strictness.py  # required-attribute/fallback behavior
     ├── test_cache.py                 # result cache
-    └── test_cli.py                   # CLI smoke tests
+    ├── test_cli.py                   # CLI smoke tests
+    └── test_pipeline_scaling.py      # weather -> occupancy -> buem scale ladder
+                                       # (tiny/small/medium always run; large/xlarge
+                                       # are opt-in, minutes-to-days benchmarks --
+                                       # see the module docstring)
 
 Building Documentation
 ----------------------

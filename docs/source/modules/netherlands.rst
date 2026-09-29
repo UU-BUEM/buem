@@ -838,6 +838,12 @@ an OSQP fallback), so it varies little between buildings — meaning
 throughput scales with worker count, and a whole community is a
 laptop-scale job, not one that needs a cluster.
 
+``tests/test_pipeline_scaling.py`` wraps this same run (and the smaller
+``ParallelBuildingProcessor`` path) as a graduated pytest scale ladder --
+from a single building up through Heeten/Loenen to an externally-supplied
+larger region -- for benchmarking where time is spent across the
+weather/occupancy/buem chain rather than validating buem's own output.
+
 
 Validation
 --------------

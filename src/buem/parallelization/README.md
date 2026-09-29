@@ -14,6 +14,11 @@ This package cannot read a building source; it only takes pre-written
 request files, and its `buem multibuilding` CLI is wired to a fixed set of
 15 demo JSONs under `src/buem/data/buildings/dummy/`.
 
+`tests/test_pipeline_scaling.py` exercises both entry points as a graduated
+scale ladder (1 building -> 15 -> a real region -> an externally-supplied
+larger region), for characterizing where time actually goes across the
+weather -> occupancy -> buem chain this package sits in the middle of.
+
 ---
 
 ## Whole-region runs — `buem.analysis.batch`
@@ -140,3 +145,13 @@ Parquet; each row carries its own exception. Re-run just those with
 
 **Slower than expected on a many-core host** — check the BLAS thread
 variables above; unpinned, they are the usual cause.
+
+**Every worker fails immediately, `ParallelBuildingProcessor` only** — on
+some Windows conda environments, a `netCDF4`/`numpy` ABI mismatch
+(`RuntimeWarning: numpy.ndarray size changed, may indicate binary
+incompatibility`) fires on `netCDF4`'s first import inside each freshly
+spawned worker process, aborting its weather fetch before any building
+solves. Not something to work around in code that calls this package —
+it is an environment/build issue in the worker's own fresh interpreter,
+reproducible with `scripts/benchmark_worker_scaling.py` alone. Rebuild
+the conda env's `netCDF4`/`numpy` pair from matching wheels if it shows up.

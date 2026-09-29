@@ -59,6 +59,18 @@ from buem.thermal.model_buem import ModelBUEM
 DUMMY_DIR = project_root / "src" / "buem" / "data" / "buildings" / "dummy"
 NL_DIR = project_root / "src" / "buem" / "data" / "buildings" / "netherlands"
 
+# lod2_building_feature.csv / lod2_child_feature_surface.csv / tabula.csv are
+# real per-region geometry, gitignored by the repo-wide *.csv rule (same
+# treatment as the TABULA workbook -- see CLAUDE.md's tabula-workbook-access
+# open item). A region directory can exist in a checkout (e.g. its two
+# tracked reference CSVs) without these, so CsvBuildingSource's own required
+# files are what must be checked, not just the directory.
+_REQUIRED_CSV_SOURCE_FILES = ("lod2_building_feature.csv", "lod2_child_feature_surface.csv", "tabula.csv")
+
+
+def _has_csv_building_source(region_dir: Path) -> bool:
+    return all((region_dir / f).exists() for f in _REQUIRED_CSV_SOURCE_FILES)
+
 
 def _load_building_attributes(fixture_path: Path) -> dict:
     payload = __import__("json").loads(fixture_path.read_text(encoding="utf-8"))
@@ -172,8 +184,8 @@ def _run_batch_tier(data_dir: Path, label: str, env_workers_var: str):
 
 @pytest.mark.slow
 @pytest.mark.skipif(
-    not (NL_DIR / "Heeten").exists(),
-    reason="Heeten CsvBuildingSource fixture not present in this checkout.",
+    not _has_csv_building_source(NL_DIR / "Heeten"),
+    reason="Heeten's CsvBuildingSource CSVs (gitignored, real per-region geometry) are not present in this checkout.",
 )
 def test_medium_region_batch_heeten():
     """Tier: medium (Heeten, ~200 buildings via `run_batch`, a few minutes).
@@ -191,8 +203,8 @@ def test_medium_region_batch_heeten():
 
 @pytest.mark.slow
 @pytest.mark.skipif(
-    not (NL_DIR / "Loenen").exists(),
-    reason="Loenen CsvBuildingSource fixture not present in this checkout.",
+    not _has_csv_building_source(NL_DIR / "Loenen"),
+    reason="Loenen's CsvBuildingSource CSVs (gitignored, real per-region geometry) are not present in this checkout.",
 )
 @pytest.mark.skipif(
     os.environ.get("BUEM_RUN_LARGE_BENCH") != "1",

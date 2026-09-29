@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.2.1] - 2026-09-29
+
+### Fixed
+
+- **`test_medium_region_batch_heeten`/`test_large_region_batch_loenen`
+  (added in v6.2.0) failed on GitHub Actions CI**, exit code 1: their
+  `skipif` only checked that the region *directory* existed, not that
+  its `CsvBuildingSource` CSVs (`lod2_building_feature.csv`,
+  `lod2_child_feature_surface.csv`, `tabula.csv`) were actually present.
+  Those files are real per-region geometry, gitignored by the repo-wide
+  `*.csv` rule (same category as the TABULA workbook's own
+  `tabula-workbook-access` gap) -- present on the dev machine that added
+  the tests, absent on a fresh CI checkout, where only Heeten's two
+  small tracked reference CSVs exist. Both tests now check for the
+  actual required files via a shared `_has_csv_building_source()` helper
+  and skip cleanly when they are missing, instead of failing.
+
 ## [6.2.0] - 2026-09-29
 
 ### Added

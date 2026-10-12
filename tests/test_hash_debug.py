@@ -24,7 +24,19 @@ def _load_v3_attrs() -> dict:
 
 
 def test_hash_determinism():
-    """cfg hash must be identical for two builds from the same attributes."""
+    """cfg hash must be identical for two builds from the same attributes
+    *and* the same building_id.
+
+    building_id was an arbitrary, unused label when this test was written
+    (occupancy's own default seed was derived purely from construction
+    inputs -- type/archetype/size/year/region -- so varying it was a no-op).
+    occupancy/#15 made it a real seed input (AttributeBuilder resolves
+    seed=None to occupancy.building_seed(building_id, year=...)) precisely
+    so that two buildings sharing every other construction input no longer
+    collide onto the same profile -- so this test now has to hold
+    building_id fixed to isolate the thing it actually checks: the same
+    building, built twice, is deterministic.
+    """
     payload_attrs = _load_v3_attrs()
 
     builder1 = AttributeBuilder(payload_attrs=payload_attrs, building_id="test1")
@@ -32,7 +44,7 @@ def test_hash_determinism():
     cfg1 = CfgBuilding(merged1).to_cfg_dict()
     h1 = compute_cfg_hash(cfg1)
 
-    builder2 = AttributeBuilder(payload_attrs=payload_attrs, building_id="test2")
+    builder2 = AttributeBuilder(payload_attrs=payload_attrs, building_id="test1")
     merged2 = builder2.build()
     cfg2 = CfgBuilding(merged2).to_cfg_dict()
     h2 = compute_cfg_hash(cfg2)

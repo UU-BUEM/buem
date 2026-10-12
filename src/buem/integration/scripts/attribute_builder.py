@@ -17,6 +17,7 @@ from occupancy import (  # type: ignore[import]
     ElectricityConsumptionProfile,
     HouseholdProfile,
     ServiceBuildingProfile,
+    building_seed,
     generate_dhw_draws,
     to_buem_profiles,
 )
@@ -75,6 +76,35 @@ _BLENDED_PROFILE_KEYS = ("Q_ig", "elecLoad")
 # occupancy's equipment category covering hob, oven, microwave, kettle and
 # small cooking appliances -- the set whose energy buem reports as cooking.
 _COOKING_EQUIPMENT_CATEGORY = "kitchen"
+
+# Cap on the number of distinct households generated per multi-dwelling
+# building (occupancy/#14), mirroring occupancy.households.building's own
+# DEFAULT_DWELLING_CAP: diversity benefit saturates well before real
+# dwelling counts (apartment blocks of 50+), so this bounds per-building
+# generation cost once more distinct draws stop changing the aggregate's
+# shape.
+_DEFAULT_DWELLING_CAP = 20
+
+# Large odd stride so consecutive dwelling indices land far apart in the
+# seed space, rather than producing near-identical seeds (and hence
+# correlated draws) for adjacent dwellings in the same building.
+_DWELLING_SEED_STRIDE = 104_395_301
+_SEED_MODULUS = 1 << 63
+
+
+def _dwelling_sizes(n: int, mean_num_persons: float) -> list[int]:
+    """``n`` household sizes bracketing ``mean_num_persons`` (the two
+    adjacent integers) so their mean equals it, rather than every dwelling
+    in the building rounding to the same size -- the multi-dwelling
+    counterpart of :func:`_bracket_occupancy`'s single-household blend,
+    spread across ``n`` real, independently-drawn households instead of
+    blending two correlated ones."""
+    low = max(1, math.floor(mean_num_persons))
+    high = low + 1
+    frac = mean_num_persons - low
+    n_high = min(max(round(frac * n), 0), n)
+    n_low = n - n_high
+    return [low] * n_low + [high] * n_high
 
 
 def _bracket_occupancy(num_persons: float) -> tuple[int, int, float]:
@@ -454,6 +484,114 @@ class AttributeBuilder:
         cooking_kwh = _generate_cooking_energy(household, elec_gen, seed)
         return result, dhw_liters, dhw_kwh, cooking_kwh
 
+    def _generate_multi_dwelling_household(
+        self, units: float, num_persons_mean: float, archetype: str,
+        weather_year: int, seed: Any, equipment_spec: Any,
+    ) -> tuple[dict[str, pd.Series], pd.Series | None, pd.Series | None, pd.Series | None]:
+        """Build a multi-dwelling (AB/MFH) building's occupancy-derived
+        profiles from ``n = min(round(units), cap)`` distinct households
+        instead of one household scaled by ``units``.
+
+        Fixes occupancy/#14: scaling one household's ``Q_ig``/``elecLoad``
+        by the dwelling count made every dwelling in the block peak at the
+        same hour, so the building's coincident peak was overstated by a
+        factor that didn't diversify with its size (measured peak/mean
+        ratio ~17 regardless of unit count). Summing ``n`` distinct,
+        independently-seeded households and scaling the sum by
+        ``units / n`` instead reproduces the same annual total but a
+        realistic, diversified peak (measured ratio ~5.8 at 20 units).
+
+        Each dwelling still goes through :meth:`_generate_household`
+        (same ``equipment_spec``/cooking/DHW handling as the
+        single-dwelling path -- this only changes how many households are
+        drawn and how they're combined, not what occupancy capability
+        generates them), so per-item equipment selection, per-fixture DHW
+        pricing and cooking-carrier accounting are unaffected.
+
+        Returns ``(buem_inputs, dhw_liters, dhw_kwh, cooking_kwh)`` in the
+        same shape :meth:`generate_electricity_profile` already expects
+        from the single-dwelling path, via a real ``to_buem_profiles()``
+        call per dwelling rather than hand-rolling the Q_ig/elecLoad
+        derivation here. ``occ_nothome``/``occ_sleeping`` are averaged
+        (not summed) across dwellings -- they're dimensionless presence
+        fractions, already building-wide-equivalent per household;
+        ``cooking_active`` is OR'd (true if any dwelling is cooking).
+
+        Each dwelling's seed is derived from this building's own seed
+        (an explicit ``seed=``, or ``occupancy.building_seed(building_id,
+        year=weather_year)`` when a real ``building_id`` is available --
+        see :meth:`generate_electricity_profile`) offset by its dwelling
+        index, so dwellings draw independently rather than replaying the
+        same bit-stream.
+        """
+        n = max(1, min(round(units), _DEFAULT_DWELLING_CAP))
+        scale = units / n
+        sizes = _dwelling_sizes(n, num_persons_mean)
+        base_seed = (
+            seed if seed is not None
+            else building_seed(f"{archetype}|{num_persons_mean:.6f}", year=weather_year)
+        )
+
+        q_ig_total: pd.Series | None = None
+        elec_total: pd.Series | None = None
+        nothome_terms: list[pd.Series] = []
+        sleeping_terms: list[pd.Series] = []
+        cooking_active_any: pd.Series | None = None
+        dhw_liters_total: pd.Series | None = None
+        dhw_kwh_total: pd.Series | None = None
+        cooking_kwh_total: pd.Series | None = None
+
+        for i, size in enumerate(sizes):
+            dwelling_seed = (base_seed + i * _DWELLING_SEED_STRIDE) % _SEED_MODULUS
+            result, dhw_liters, dhw_kwh, cooking_kwh = self._generate_household(
+                size, archetype, weather_year, dwelling_seed, equipment_spec,
+            )
+            inputs = to_buem_profiles(result)
+
+            q_ig_total = inputs["Q_ig"] if q_ig_total is None else q_ig_total + inputs["Q_ig"]
+            elec_total = inputs["elecLoad"] if elec_total is None else elec_total + inputs["elecLoad"]
+            nothome_terms.append(inputs["occ_nothome"])
+            sleeping_terms.append(inputs["occ_sleeping"])
+            if "cooking_active" in inputs:
+                cooking_active_any = (
+                    inputs["cooking_active"] if cooking_active_any is None
+                    else cooking_active_any | inputs["cooking_active"]
+                )
+            if dhw_liters is not None:
+                dhw_liters_total = (
+                    dhw_liters if dhw_liters_total is None else dhw_liters_total + dhw_liters
+                )
+            if dhw_kwh is not None:
+                dhw_kwh_total = dhw_kwh if dhw_kwh_total is None else dhw_kwh_total + dhw_kwh
+            if cooking_kwh is not None:
+                cooking_kwh_total = (
+                    cooking_kwh if cooking_kwh_total is None else cooking_kwh_total + cooking_kwh
+                )
+
+        assert q_ig_total is not None and elec_total is not None
+        buem_inputs: dict[str, pd.Series] = {
+            "Q_ig": (q_ig_total * scale).rename("Q_ig"),
+            "elecLoad": (elec_total * scale).rename("elecLoad"),
+            "occ_nothome": (sum(nothome_terms) / len(nothome_terms)).rename("occ_nothome"),
+            "occ_sleeping": (sum(sleeping_terms) / len(sleeping_terms)).rename("occ_sleeping"),
+        }
+        if cooking_active_any is not None:
+            buem_inputs["cooking_active"] = cooking_active_any
+
+        if dhw_liters_total is not None:
+            dhw_liters_total = (dhw_liters_total * scale).rename("dhw_liters_total")
+        if dhw_kwh_total is not None:
+            dhw_kwh_total = dhw_kwh_total * scale
+        if cooking_kwh_total is not None:
+            cooking_kwh_total = (cooking_kwh_total * scale).rename("cooking_kwh")
+
+        logger.debug(
+            "Generated %d distinct household(s) (scale %.3f) for a "
+            "%.1f-dwelling building, mean_num_persons=%.2f",
+            n, scale, units, num_persons_mean,
+        )
+        return buem_inputs, dhw_liters_total, dhw_kwh_total, cooking_kwh_total
+
     def _apply_cooking_energy_balance(
         self, buem_inputs: dict[str, pd.Series], cooking_kwh: pd.Series,
         elec_load_was_supplied: bool,
@@ -525,6 +663,17 @@ class AttributeBuilder:
         Q_ig/occ_nothome/occ_sleeping). Household equipment can optionally
         be filtered via the "equipment" attribute (residential
         building_type only).
+
+        ``seed`` resolves to ``occupancy.building_seed(building_id,
+        year=weather_year)`` when unset and a real ``building_id`` is
+        available (occupancy/#15 -- gives each building its own stable
+        seed instead of colliding with every other building sharing the
+        same type/archetype/size/year/region). A multi-dwelling building
+        (``residential_units > 1``, no ``use_provided_elecLoad``) is built
+        from several distinct, independently-seeded households summed
+        together rather than one household scaled by the dwelling count
+        (occupancy/#14 -- see ``_generate_multi_dwelling_household``),
+        which otherwise overstated the building's coincident peak.
         """
         use_provided_elec = bool(self.merged_attrs.get("use_provided_elecLoad", False))
         provided_elec_load: pd.Series | None = None
@@ -547,6 +696,19 @@ class AttributeBuilder:
         # Get generation parameters
         building_type = self.merged_attrs.get("building_type", ATTRIBUTE_SPECS["building_type"].default)
         seed = self.merged_attrs.get("seed", ATTRIBUTE_SPECS["seed"].default)
+        if seed is None and self.building_id is not None:
+            # occupancy/#15: without a real per-building identifier,
+            # occupancy's own `seed=None` default hashes only this
+            # building's construction inputs (building_type/archetype,
+            # num_persons/capacity, year, region) -- so two buildings
+            # that happen to share all of those (common across a
+            # portfolio/grid model) collide onto the same seed and
+            # produce byte-identical profiles, overstating coincident
+            # demand peaks. `self.building_id` is a real external
+            # identifier already available here; deriving the seed from
+            # it via `occupancy.building_seed` gives each building its
+            # own stable, reproducible seed instead.
+            seed = building_seed(self.building_id, year=weather_year)
         equipment_spec = self.merged_attrs.get("equipment", ATTRIBUTE_SPECS["equipment"].default)
 
         try:
@@ -564,6 +726,12 @@ class AttributeBuilder:
             upper_weight = 0.0
             cooking_kwh: pd.Series | None = None
             dhw_kwh: pd.Series | None = None
+            # Set only by the multi-dwelling branch below; carries a
+            # fully-formed, already-scaled buem_inputs dict so the single-
+            # household `to_buem_profiles(result, ...)` call and the flat
+            # `* units` scaling further down are both skipped for it.
+            multi_dwelling_inputs: dict[str, pd.Series] | None = None
+            units = float(self.merged_attrs.get("residential_units", 1.0) or 1.0)
 
             if building_type in RESIDENTIAL_BUILDING_TYPES:
                 num_persons_mean = self._resolve_num_persons(building_type)
@@ -574,14 +742,28 @@ class AttributeBuilder:
                 archetype = self.merged_attrs.get("archetype") or DEFAULT_ARCHETYPE_BY_BUILDING_TYPE.get(
                     building_type, "generic"
                 )
-                lower_n, upper_n, upper_weight = _bracket_occupancy(num_persons_mean)
-                result, dhw_liters, dhw_kwh, cooking_kwh = self._generate_household(
-                    lower_n, archetype, weather_year, seed, equipment_spec,
-                )
-                if upper_weight > 0.0:
-                    upper_household = self._generate_household(
-                        upper_n, archetype, weather_year, seed, equipment_spec,
+                if units > 1.0 and provided_elec_load is None:
+                    # occupancy/#14: diversified multi-household path --
+                    # see _generate_multi_dwelling_household. Not used when
+                    # provided_elec_load is set, since elecLoad is a real
+                    # measured series in that case and only Q_ig would
+                    # benefit from diversifying -- kept on the simpler
+                    # single-household + flat-scale path below instead.
+                    multi_dwelling_inputs, dhw_liters, dhw_kwh, cooking_kwh = (
+                        self._generate_multi_dwelling_household(
+                            units, num_persons_mean, archetype, weather_year,
+                            seed, equipment_spec,
+                        )
                     )
+                else:
+                    lower_n, upper_n, upper_weight = _bracket_occupancy(num_persons_mean)
+                    result, dhw_liters, dhw_kwh, cooking_kwh = self._generate_household(
+                        lower_n, archetype, weather_year, seed, equipment_spec,
+                    )
+                    if upper_weight > 0.0:
+                        upper_household = self._generate_household(
+                            upper_n, archetype, weather_year, seed, equipment_spec,
+                        )
             else:
                 # Non-residential: route through occupancy's ServiceBuildingProfile
                 # instead of forcing every building through HouseholdProfile.
@@ -638,91 +820,91 @@ class AttributeBuilder:
                 # generate_dhw_draws() consumes are household-specific.
                 dhw_liters = None
 
-            if provided_elec_load is not None:
-                # occupancy's own result.profile.index is on-the-hour
-                # (00:00, 01:00, ...), while a caller-supplied series aligned
-                # to buem's weather index is typically half-hour-offset
-                # (00:30, 01:30, ... -- interval-midpoint timestamps). to_buem_
-                # profiles()'s internal elec_load reindex is exact-match only,
-                # so realign here first with the same nearest+tolerance
-                # approach already used to align buem_inputs onto weather_df
-                # below, rather than have a realistically-timestamped caller
-                # series fail with a confusing "does not cover the index"
-                # error from inside occupancy.
-                provided_elec_load = _reindex_or_raise(
-                    provided_elec_load, result.profile.index, "elecLoad"
+            if multi_dwelling_inputs is not None:
+                # Already a complete, correctly-scaled aggregate --
+                # _generate_multi_dwelling_household ran to_buem_profiles()
+                # per dwelling internally. No single `result` exists to
+                # call it on here, and no further `* units` scaling is
+                # needed (or correct -- it's already summed across `n`
+                # distinct dwellings rather than one).
+                buem_inputs = multi_dwelling_inputs
+            else:
+                if provided_elec_load is not None:
+                    # occupancy's own result.profile.index is on-the-hour
+                    # (00:00, 01:00, ...), while a caller-supplied series aligned
+                    # to buem's weather index is typically half-hour-offset
+                    # (00:30, 01:30, ... -- interval-midpoint timestamps). to_buem_
+                    # profiles()'s internal elec_load reindex is exact-match only,
+                    # so realign here first with the same nearest+tolerance
+                    # approach already used to align buem_inputs onto weather_df
+                    # below, rather than have a realistically-timestamped caller
+                    # series fail with a confusing "does not cover the index"
+                    # error from inside occupancy.
+                    provided_elec_load = _reindex_or_raise(
+                        provided_elec_load, result.profile.index, "elecLoad"
+                    )
+
+                buem_inputs = to_buem_profiles(
+                    result, floor_area_m2=floor_area_m2, elec_load=provided_elec_load
                 )
 
-            buem_inputs = to_buem_profiles(
-                result, floor_area_m2=floor_area_m2, elec_load=provided_elec_load
-            )
+                # Reproduce a fractional mean household size by blending the two
+                # integer-sized households that bracket it (see
+                # _bracket_occupancy). Only the gain magnitudes are blended --
+                # _BLENDED_PROFILE_KEYS documents why the rest are not. A
+                # caller-supplied elecLoad is a real measured series and is left
+                # exactly as measured.
+                if upper_household is not None:
+                    upper_result, upper_dhw, upper_dhw_kwh, upper_cooking = upper_household
+                    upper_inputs = to_buem_profiles(
+                        upper_result, floor_area_m2=floor_area_m2,
+                        elec_load=provided_elec_load,
+                    )
+                    for key in _BLENDED_PROFILE_KEYS:
+                        if key == "elecLoad" and provided_elec_load is not None:
+                            continue
+                        if key in buem_inputs and key in upper_inputs:
+                            buem_inputs[key] = _blend_series(
+                                buem_inputs[key], upper_inputs[key], upper_weight,
+                            )
+                    if dhw_liters is not None and upper_dhw is not None:
+                        dhw_liters = _blend_series(dhw_liters, upper_dhw, upper_weight)
+                    if dhw_kwh is not None and upper_dhw_kwh is not None:
+                        dhw_kwh = _blend_series(dhw_kwh, upper_dhw_kwh, upper_weight)
+                    if cooking_kwh is not None and upper_cooking is not None:
+                        cooking_kwh = _blend_series(cooking_kwh, upper_cooking, upper_weight)
+                    logger.debug(
+                        "Blended occupancy across %d/%d persons (upper weight %.2f)",
+                        lower_n, upper_n, upper_weight,
+                    )
 
-            # Reproduce a fractional mean household size by blending the two
-            # integer-sized households that bracket it (see
-            # _bracket_occupancy). Only the gain magnitudes are blended --
-            # _BLENDED_PROFILE_KEYS documents why the rest are not. A
-            # caller-supplied elecLoad is a real measured series and is left
-            # exactly as measured.
-            if upper_household is not None:
-                upper_result, upper_dhw, upper_dhw_kwh, upper_cooking = upper_household
-                upper_inputs = to_buem_profiles(
-                    upper_result, floor_area_m2=floor_area_m2,
-                    elec_load=provided_elec_load,
-                )
-                for key in _BLENDED_PROFILE_KEYS:
-                    if key == "elecLoad" and provided_elec_load is not None:
-                        continue
-                    if key in buem_inputs and key in upper_inputs:
-                        buem_inputs[key] = _blend_series(
-                            buem_inputs[key], upper_inputs[key], upper_weight,
-                        )
-                if dhw_liters is not None and upper_dhw is not None:
-                    dhw_liters = _blend_series(dhw_liters, upper_dhw, upper_weight)
-                if dhw_kwh is not None and upper_dhw_kwh is not None:
-                    dhw_kwh = _blend_series(dhw_kwh, upper_dhw_kwh, upper_weight)
-                if cooking_kwh is not None and upper_cooking is not None:
-                    cooking_kwh = _blend_series(cooking_kwh, upper_cooking, upper_weight)
-                logger.debug(
-                    "Blended occupancy across %d/%d persons (upper weight %.2f)",
-                    lower_n, upper_n, upper_weight,
-                )
-
-            # Scale one dwelling's gains up to the whole building for
-            # multi-dwelling buildings (AB/MFH). TABULA models an apartment
-            # block as a single thermal zone spanning every dwelling
-            # (its AB/MFH archetypes carry n_Apartment counts of 15-56),
-            # and buem's envelope is likewise the whole block -- so the
-            # internal gains driving that envelope must cover every
-            # dwelling in it, not one household.
-            #
-            # Scaling one generated profile is preferred over generating N
-            # independent ones: it keeps occupancy's own household-size
-            # calibration valid (its stochastic generators are calibrated
-            # for real household sizes, not a fictitious 50-person
-            # household) at a fraction of the cost. The simplification is
-            # that dwellings are treated as perfectly correlated, which
-            # leaves annual energy totals exact but overstates the
-            # simultaneity of peak internal gains.
-            #
-            # occ_nothome/occ_sleeping are deliberately not scaled: they
-            # are fractions of occupants, dimensionless and already
-            # building-wide. A caller-supplied elecLoad is also left alone
-            # -- a real measured series is whatever the caller measured.
-            units = float(self.merged_attrs.get("residential_units", 1.0) or 1.0)
-            if units > 1.0:
-                buem_inputs["Q_ig"] = buem_inputs["Q_ig"] * units
-                if provided_elec_load is None:
-                    buem_inputs["elecLoad"] = buem_inputs["elecLoad"] * units
-                if dhw_liters is not None:
-                    dhw_liters = dhw_liters * units
-                if dhw_kwh is not None:
-                    dhw_kwh = dhw_kwh * units
-                if cooking_kwh is not None:
-                    cooking_kwh = cooking_kwh * units
-                logger.info(
-                    "Scaled occupancy gains by %.0f dwelling(s) for multi-dwelling "
-                    "building_type=%r", units, building_type,
-                )
+                # Scale one dwelling's gains up to the whole building for a
+                # multi-dwelling building (AB/MFH) that took this
+                # single-household path -- only reachable when
+                # provided_elec_load forced it (see above); the normal
+                # multi-dwelling case already produced a diversified,
+                # correctly-scaled aggregate via multi_dwelling_inputs and
+                # skips this entirely.
+                #
+                # occ_nothome/occ_sleeping are deliberately not scaled: they
+                # are fractions of occupants, dimensionless and already
+                # building-wide. A caller-supplied elecLoad is also left
+                # alone -- a real measured series is whatever the caller
+                # measured.
+                if units > 1.0:
+                    buem_inputs["Q_ig"] = buem_inputs["Q_ig"] * units
+                    if provided_elec_load is None:
+                        buem_inputs["elecLoad"] = buem_inputs["elecLoad"] * units
+                    if dhw_liters is not None:
+                        dhw_liters = dhw_liters * units
+                    if dhw_kwh is not None:
+                        dhw_kwh = dhw_kwh * units
+                    if cooking_kwh is not None:
+                        cooking_kwh = cooking_kwh * units
+                    logger.info(
+                        "Scaled occupancy gains by %.0f dwelling(s) for multi-dwelling "
+                        "building_type=%r (single-household path)", units, building_type,
+                    )
 
             # Align index with weather (8760 hourly points)
             if isinstance(weather_df, pd.DataFrame) and not weather_df.empty:

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Multi-dwelling buildings (AB/MFH, `residential_units > 1`) now
+  diversify instead of scaling.** Previously
+  `AttributeBuilder.generate_electricity_profile()` generated one
+  household and multiplied its `Q_ig`/`elecLoad` (and DHW/cooking) by the
+  dwelling count, so every dwelling peaked at the same hour and the
+  building's coincident peak was overstated by a factor that didn't
+  diversify with size (occupancy/#14). It now generates up to 20 distinct,
+  independently-seeded households (sizes bracketing the building's mean
+  household size) via `_generate_multi_dwelling_household()`, sums them,
+  and scales by `dwellings / n` -- unaffected when `use_provided_elecLoad`
+  is set, which still takes the single-household path.
+- `AttributeBuilder.generate_electricity_profile()`'s `seed` now resolves
+  to `occupancy.building_seed(building_id, year=weather_year)` when unset
+  and a real `building_id` was supplied, instead of always falling
+  through to occupancy's own construction-input-derived default
+  (occupancy/#15). Two buildings sharing every other construction input
+  (type/archetype, num_persons/capacity, year, region) no longer collide
+  onto the same seed and profile. Buildings built without a `building_id`
+  are unaffected.
+
 ## [6.2.1] - 2026-09-29
 
 ### Fixed

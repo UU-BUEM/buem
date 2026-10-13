@@ -252,7 +252,17 @@ def _process_one_building(building_feature_id: int, use_milp: bool) -> dict[str,
         # names a region; None falls back to the country-wide figures.
         attrs["region_code"] = _WORKER_REGION_CODE
 
-        merged = AttributeBuilder(payload_attrs=attrs).build()
+        # occupancy/#15: without a real per-building identifier, occupancy's
+        # own seed=None default hashes only building_type/archetype/
+        # num_persons/year/region -- so every building in a population run
+        # that shares all of those (a whole TABULA stratum) collapses onto
+        # one generated occupancy profile. building_feature_id is a real,
+        # stable per-building identifier already available here; passing it
+        # lets AttributeBuilder resolve a distinct seed per building via
+        # occupancy.building_seed() instead.
+        merged = AttributeBuilder(
+            payload_attrs=attrs, building_id=str(building_feature_id),
+        ).build()
         cfg = CfgBuilding(merged).to_cfg_dict()
         model = ModelBUEM(cfg)
         model.sim_model(use_milp=use_milp)

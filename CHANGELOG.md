@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.3.1] - 2026-10-13
+
+### Fixed
+
+- v6.3.0's `building_id`-derived seeding never actually reached any of
+  buem's own population-analysis entry points: `batch.py`'s
+  `_process_one_building`, `scripts/run_region_hourly.py`,
+  `construction_year_stratification.py`, `validation.py`, and
+  `provider_comparison.py` all built `AttributeBuilder(...)` without
+  passing `building_id=`, so every population-scale run (the Loenen/
+  Heeten batch runs, CBS validation, typology comparison) kept resolving
+  occupancy's construction-input-derived default seed regardless --
+  v6.3.0's fix was live only on the single-building `geojson_processor.py`
+  path. All five now pass `building_id=str(building_feature_id)` (or the
+  equivalent `building.identity.building_feature_id`), so every
+  population run gets genuine per-building occupancy diversity.
+
 ## [6.3.0] - 2026-10-12
 
 ### Changed

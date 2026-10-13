@@ -696,7 +696,12 @@ def _simulate_energy_kwh(
         # for apartments. Same CBS RegioS code the comparison itself uses,
         # so the simulated and reference sides describe one region.
         attrs["region_code"] = region_code
-        merged = AttributeBuilder(payload_attrs=attrs).build()
+        # occupancy/#15 -- see buem.analysis.batch._process_one_building's
+        # comment.
+        merged = AttributeBuilder(
+            payload_attrs=attrs,
+            building_id=str(building.identity.building_feature_id),
+        ).build()
         cfg = CfgBuilding(merged).to_cfg_dict()
         model = ModelBUEM(cfg)
         model.sim_model(use_milp=use_milp)

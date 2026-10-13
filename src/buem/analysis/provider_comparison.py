@@ -97,7 +97,12 @@ def run_building_across_providers(
         attrs["weather"] = weather_df
         attrs["use_provided_weather"] = True
 
-        merged = AttributeBuilder(payload_attrs=attrs).build()
+        # occupancy/#15 -- see buem.analysis.batch._process_one_building's
+        # comment.
+        merged = AttributeBuilder(
+            payload_attrs=attrs,
+            building_id=str(building.identity.building_feature_id),
+        ).build()
         cfg = CfgBuilding(merged).to_cfg_dict()
         model = ModelBUEM(cfg)
         model.sim_model(use_milp=use_milp)

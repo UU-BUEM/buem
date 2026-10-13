@@ -238,7 +238,14 @@ def _simulate_intensity(
         attrs["use_provided_weather"] = True
         if num_persons is not None:
             attrs["num_persons"] = round(num_persons)
-        merged = AttributeBuilder(payload_attrs=attrs).build()
+        # occupancy/#15 -- see buem.analysis.batch._process_one_building's
+        # comment: a per-building seed avoids every building sharing an
+        # (archetype, size, year, region) tuple collapsing onto one
+        # generated occupancy profile.
+        merged = AttributeBuilder(
+            payload_attrs=attrs,
+            building_id=str(building.identity.building_feature_id),
+        ).build()
         cfg = CfgBuilding(merged).to_cfg_dict()
         if comfort_bounds is not None:
             lb, ub = comfort_bounds

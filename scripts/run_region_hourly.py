@@ -133,7 +133,12 @@ def _process_one_building_hourly(building_feature_id: int, use_milp: bool) -> tu
         attrs["residential_units"] = units
         attrs["region_code"] = _batch_mod._WORKER_REGION_CODE
 
-        merged = AttributeBuilder(payload_attrs=attrs).build()
+        # occupancy/#15 -- see buem.analysis.batch._process_one_building's
+        # matching comment. Keeping this hourly path's own seeding
+        # consistent with the annual-summary batch path it mirrors.
+        merged = AttributeBuilder(
+            payload_attrs=attrs, building_id=str(building_feature_id),
+        ).build()
         cfg = CfgBuilding(merged).to_cfg_dict()
         model = ModelBUEM(cfg)
         model.sim_model(use_milp=use_milp)

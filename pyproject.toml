@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "buem"
 dynamic = ["version"]
-description = "Building energy model for analysis of hourly thermal load(ISO 52019-1:2017, 5R1C)"
+description = "Building energy model for hourly heating and cooling demand (EN ISO 13790 5R1C)"
 authors = [
     { name="Somadutta Sahoo", email="s.sahoo@uu.nl" }
 ]

@@ -7,7 +7,7 @@ Console entry-point declared in pyproject.toml::
 
 Subcommands
 -----------
-buem run            Run the ISO 52016 thermal model for a single building.
+buem run            Run the ISO 13790 5R1C thermal model for a single building.
 buem api            Start the BUEM REST API server (Gunicorn or Flask dev).
 buem validate       Verify the installation and environment paths.
 buem version        Print the installed BuEM version.
@@ -22,7 +22,7 @@ import sys
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="buem",
-        description="Building Urban Energy Model (BUEM) — ISO 52016 5R1C thermal model",
+        description="Building Energy Model (BuEM) — ISO 13790 5R1C thermal model",
     )
     sub = p.add_subparsers(dest="command", metavar="COMMAND")
 

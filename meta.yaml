@@ -41,5 +41,5 @@ requirements:
     - scipy
 
 about:
-  summary: "Building thermal simulation module (ISO 52016-1 5R1C)"
+  summary: "Building thermal simulation module (ISO 13790 5R1C)"
   license: MIT

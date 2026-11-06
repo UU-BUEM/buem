@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.3.2] - 2026-11-06
+
+### Added
+
+- `CITATION.cff`: citation metadata for GitHub's "Cite this
+  repository" button and for Zenodo, which archives every release
+  from this version on and issues it a DOI.
+
+### Fixed
+
+- The package description (`pyproject.toml`, `meta.yaml`), the CLI
+  help text and the report footer now all name EN ISO 13790, the
+  standard whose 5R1C method the model implements. Wording only;
+  model output is unchanged.
+
 ## [6.3.1] - 2026-10-13
 
 ### Fixed

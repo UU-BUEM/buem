@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+type: software
+title: "BuEM: Building Energy Model"
+abstract: "Open-source Python building energy model for hourly heating and cooling demand, implementing the five-resistance, one-capacitance (5R1C) network of EN ISO 13790."
+authors:
+  - family-names: Sahoo
+    given-names: Somadutta
+    email: s.sahoo@uu.nl
+    affiliation: Utrecht University
+repository-code: "https://github.com/UU-BUEM/buem"
+license: MIT
+keywords:
+  - building
+  - energy-model
+  - energy-communities
+  - parameterization
+  - open-source
+  - heating-cooling
+  - python

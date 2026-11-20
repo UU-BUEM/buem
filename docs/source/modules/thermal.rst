@@ -71,6 +71,10 @@ Positive :math:`Q_{\text{HC}}` = heating, negative = cooling.
 :math:`Q_c \ge 0` with binary indicators and big-M constraints.
 Solved via CVXPY (CBC / GLPK_MI) or PuLP + CBC.
 
+Neither path selects a commercial solver. Installing Gurobi makes
+``cp.GUROBI`` available to CVXPY, but it does not change which solver
+these two paths use. See :ref:`gurobi-setup`.
+
 Comfort Bounds & Setback
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

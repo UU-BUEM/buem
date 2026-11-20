@@ -28,9 +28,9 @@ Items marked **compulsory** must be installed before you can run BuEM.
      - Use / Notes
      - Download Link
    * - Python
-     - >= 3.13
+     - >= 3.14
      - Compulsory
-     - Runtime for BuEM. The conda environment pins 3.13 exactly.
+     - Runtime for BuEM. Pinned in ``infrastructure/env/buem_env.yml``.
      - `python.org <https://www.python.org/downloads/>`__
    * - Conda (Miniconda or Anaconda)
      - latest
@@ -70,6 +70,12 @@ Items marked **compulsory** must be installed before you can run BuEM.
        extension works well.
      - `VS Code <https://code.visualstudio.com/>`__ /
        `PyCharm <https://www.jetbrains.com/pycharm/>`__
+   * - Gurobi Optimizer
+     - 14.0
+     - Optional
+     - Commercial LP/MILP solver, free for academic use. It is not
+       needed to run BuEM. See :ref:`gurobi-setup`.
+     - `Gurobi <https://www.gurobi.com/downloads/>`__
 
 .. note::
 
@@ -125,7 +131,7 @@ Quick verification:
 
 .. code-block:: bash
 
-   python --version        # Python 3.13.x
+   python --version        # Python 3.14.x
    conda --version
    docker --version        # Docker version 29.x or higher
    git --version

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.3.3] - 2026-11-20
+
+### Added
+
+- Docs: an optional Gurobi setup section in the conda installation
+  guide (licence, `conda install -c gurobi`, verification), a Gurobi
+  row in the prerequisites table, and a note in the thermal module's
+  Solver section. BuEM's own LP and MILP paths still do not select
+  Gurobi, so model output is unchanged. Pyomo is not required.
+
+### Fixed
+
+- Docs: the installation pages now give Python >= 3.14, matching
+  `pyproject.toml` and `buem_env.yml`. Four places still said 3.13.
+
 ## [6.3.2] - 2026-11-06
 
 ### Added

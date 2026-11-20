@@ -9,7 +9,7 @@ Development Prerequisites
 See :doc:`prerequisites` for the full software requirements table.
 
 * Git
-* Python >= 3.13
+* Python >= 3.14
 * Conda
 * IDE with Python support (VS Code or PyCharm recommended)
 

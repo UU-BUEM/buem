@@ -81,6 +81,12 @@ class PandUseSummary:
     non_residential_area_m2: float
     """Summed registered floor area of the non-residential units."""
 
+    total_area_m2: float = 0.0
+    """Summed registered floor area (``oppervlakte``, NEN 2580 usable
+    floor area) of every unit in active use, whatever its function -- the
+    building's heated floor area as the register records it. ``0.0`` when
+    no unit carries an area."""
+
     @property
     def is_purely_non_residential(self) -> bool:
         """True when the building has a registered use and none of it is
@@ -154,7 +160,11 @@ def summarize_use_by_pand(use_df: pd.DataFrame) -> dict[str, PandUseSummary]:
         n_non_residential = 0
         functions: Counter[str] = Counter()
         non_residential_area = 0.0
+        total_area = 0.0
         for _, row in group.iterrows():
+            unit_area = row.get("oppervlakte")
+            if unit_area is not None and not pd.isna(unit_area):
+                total_area += float(unit_area)
             raw = row.get("gebruiksdoel")
             if not isinstance(raw, str) or not raw:
                 continue
@@ -173,6 +183,7 @@ def summarize_use_by_pand(use_df: pd.DataFrame) -> dict[str, PandUseSummary]:
             n_non_residential_units=n_non_residential,
             function_counts=dict(functions),
             non_residential_area_m2=non_residential_area,
+            total_area_m2=total_area,
         )
 
     n_pure = sum(1 for s in summaries.values() if s.is_purely_non_residential)

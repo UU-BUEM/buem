@@ -534,9 +534,9 @@ class ModelBUEM:
         if "F_sh_hor" not in self.cfg:
             raise ValueError("F_sh_hor (horizontal shading factor) must be specified")
         if "F_w" not in self.cfg:
-            raise ValueError("F_w (window frame factor) must be specified")
+            raise ValueError("F_w (reduction factor for non-perpendicular solar incidence on glazing) must be specified")
         if "F_f" not in self.cfg:
-            raise ValueError("F_f (floor reflection factor) must be specified")
+            raise ValueError("F_f (window frame area fraction) must be specified")
 
         self.F_sh_vert = float(self.cfg["F_sh_vert"])
         self.F_sh_hor = float(self.cfg["F_sh_hor"])

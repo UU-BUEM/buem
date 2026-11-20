@@ -207,7 +207,13 @@ def _extract_one_provider(latitude: float, longitude: float, year: int, provider
                     "hours) even via the annual export file -- no complete "
                     "local archive for this year/location."
                 )
-        return _fix_cosmo_hour_labels(df)
+        df = _fix_cosmo_hour_labels(df)
+        # The hour-ending archive carries a stamp at 1 January 00:00 that
+        # covers the last hour of the previous year; after the shift to
+        # hour-beginning labels it falls in that year, so keep the
+        # calendar year only (the annual export file includes it, which
+        # left 8,761 rows whenever the fallback was taken).
+        return df[df.index.year == year]
 
     return get_or_fetch_weather(latitude, longitude, year, provider)
 

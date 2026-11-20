@@ -244,6 +244,15 @@ def repair_dwelling_counts(buildings_df: pd.DataFrame) -> pd.DataFrame:
     for comparison against per-dwelling statistics *after* it.
     """
     result = buildings_df.copy()
+    # A count taken from BAG's own in-use residential units (see
+    # apply_bag_floor_area_and_units) is registered data, not a value to
+    # second-guess from floor area; leave those rows exactly as they are.
+    from_bag = (
+        result["residential_units_source"].eq("bag")
+        if "residential_units_source" in result.columns
+        else pd.Series(False, index=result.index)
+    )
+    kept_units = result["residential_units"].copy() if from_bag.any() else None
     # Start from the registered value, not a previously repaired one, so
     # re-running corrects an earlier repair rather than compounding it.
     if "residential_units_recorded" in result.columns:
@@ -258,6 +267,11 @@ def repair_dwelling_counts(buildings_df: pd.DataFrame) -> pd.DataFrame:
         else pd.Series(1.0, index=result.index)
     )
     floor_area = result.get("area_total_floor", pd.Series(0.0, index=result.index)).fillna(0.0) * storeys
+    # The register's own usable floor area, where available, is the better
+    # basis: footprint x storeys counts gross area and attics as storeys.
+    if "bag_floor_area" in result.columns:
+        bag_area = result["bag_floor_area"]
+        floor_area = bag_area.where(bag_area > 0, floor_area).fillna(floor_area)
 
     # Non-residential buildings have no dwellings to count. Estimating one
     # for a warehouse would scale occupancy's ServiceBuildingProfile output
@@ -283,6 +297,9 @@ def repair_dwelling_counts(buildings_df: pd.DataFrame) -> pd.DataFrame:
         "floor_area_estimate" if e != r else "rivm"
         for e, r in zip(estimated, recorded, strict=True)
     ]
+    if kept_units is not None:
+        result.loc[from_bag, "residential_units"] = kept_units[from_bag].astype(float)
+        result.loc[from_bag, "residential_units_source"] = "bag"
 
     n_repaired = int((result["residential_units_source"] == "floor_area_estimate").sum())
     if n_repaired:
@@ -291,6 +308,84 @@ def repair_dwelling_counts(buildings_df: pd.DataFrame) -> pd.DataFrame:
             "registered count implied more than %.0f m2 per dwelling.",
             n_repaired, len(result), IMPLAUSIBLE_M2_PER_DWELLING,
         )
+    return result
+
+
+# Below this share of the building's footprint, a registered floor area is
+# more likely incomplete (units missing from the register, or a unit
+# registered under a neighbouring Pand) than a real heated area: even a
+# single-storey dwelling covers most of its own footprint.
+MIN_BAG_AREA_FRACTION_OF_FOOTPRINT = 0.5
+
+
+def apply_bag_floor_area_and_units(
+    buildings_df: pd.DataFrame,
+    use_by_pand_id: dict[str, PandUseSummary],
+) -> pd.DataFrame:
+    """Attach BAG's registered floor area and dwelling count to each building.
+
+    Two attributes that the geometry can only approximate are registered
+    exactly in BAG, per verblijfsobject:
+
+    - ``bag_floor_area`` -- the summed usable floor area (NEN 2580
+      ``oppervlakte``) of the building's units in active use. LOD2's
+      footprint times the 3D BAG storey count overstates it, because the
+      footprint is gross and a pitched-roof attic counts as a storey;
+      :class:`~buem.buildings.mapping.lod2_mapper.LOD2Mapper` uses this
+      value as the reference floor area wherever it is present. Left
+      empty when the register carries no area or one below
+      :data:`MIN_BAG_AREA_FRACTION_OF_FOOTPRINT` of the footprint.
+    - ``residential_units`` -- for a residential building, the number of
+      in-use units carrying ``woonfunctie``, marked
+      ``residential_units_source = "bag"``. RIVM's count and the
+      floor-area estimate remain the fallback where BAG has none.
+
+    Returns a copy; buildings without a BAG record are unchanged apart
+    from an empty ``bag_floor_area``.
+    """
+    result = buildings_df.copy()
+    footprint = (
+        result["footprint_area"].astype(float)
+        if "footprint_area" in result.columns
+        else pd.Series(float("nan"), index=result.index)
+    )
+    areas: list[float] = []
+    units_bag: list[float] = []
+    for pid, fp in zip(result["bag_pand_id"], footprint, strict=True):
+        summary = use_by_pand_id.get(str(pid))
+        area = summary.total_area_m2 if summary is not None else 0.0
+        plausible = area > 0 and (
+            pd.isna(fp) or fp <= 0 or area >= MIN_BAG_AREA_FRACTION_OF_FOOTPRINT * fp
+        )
+        areas.append(float(area) if plausible else float("nan"))
+        units_bag.append(
+            float(summary.n_residential_units)
+            if summary is not None and summary.n_residential_units > 0
+            else float("nan")
+        )
+    result["bag_floor_area"] = areas
+    result["residential_units_bag"] = units_bag
+
+    is_residential = (
+        result["is_residential"].fillna(False).astype(bool)
+        if "is_residential" in result.columns
+        else pd.Series(True, index=result.index)
+    )
+    use_bag = is_residential & result["residential_units_bag"].notna()
+    if "residential_units_recorded" not in result.columns:
+        result["residential_units_recorded"] = result.get(
+            "residential_units", pd.Series(1.0, index=result.index)
+        )
+    result.loc[use_bag, "residential_units"] = result.loc[use_bag, "residential_units_bag"]
+    if "residential_units_source" not in result.columns:
+        result["residential_units_source"] = "rivm"
+    result.loc[use_bag, "residential_units_source"] = "bag"
+
+    logger.info(
+        "apply_bag_floor_area_and_units: registered floor area for %d/%d buildings, "
+        "registered dwelling count for %d residential building(s)",
+        int(result["bag_floor_area"].notna().sum()), len(result), int(use_bag.sum()),
+    )
     return result
 
 
@@ -449,13 +544,17 @@ def map_buildings(
         "(%d via a real energy label, %d via construction year)",
         n_matched, n_residential, sum(matched_via_label), n_matched - sum(matched_via_label),
     )
+    if use_by_pand_id:
+        result = apply_bag_floor_area_and_units(result, use_by_pand_id)
     return result
 
 
 __all__ = [
     "IMPLAUSIBLE_M2_PER_DWELLING",
     "LABEL_TO_YEAR_CLASS",
+    "MIN_BAG_AREA_FRACTION_OF_FOOTPRINT",
     "TYPICAL_DWELLING_AREA_M2",
+    "apply_bag_floor_area_and_units",
     "estimate_dwelling_units",
     "label_to_construction_class",
     "map_buildings",

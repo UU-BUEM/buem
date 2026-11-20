@@ -357,16 +357,28 @@ class LOD2Mapper:
             # behavior -- see building_registry.DEFAULT_COMFORT_T_LB.
         )
 
-        # 12. Compute reference floor area from LOD2 floor areas
-        a_ref = float(bldg_row.get("area_total_floor", 0.0) or 0.0)
-        if a_ref == 0.0:
-            a_ref = sum(float(r["surface_area"]) for _, r in floors_df.iterrows())
+        # 12. Reference floor area. A registered usable floor area (BAG
+        # `oppervlakte`, attached as `bag_floor_area` by
+        # nl_archetype_mapper.apply_bag_floor_area_and_units) is preferred:
+        # the geometric estimate below -- gross footprint times the storey
+        # count -- overstates heated area, by a median factor of about 1.5
+        # in Loenen, because the footprint is gross and a pitched-roof
+        # attic counts as a storey. The geometric estimate remains the
+        # fallback wherever no register provides an area.
+        bag_area = bldg_row.get("bag_floor_area")
+        if bag_area is not None and not pd.isna(bag_area) and float(bag_area) > 0:
+            a_ref_total = float(bag_area)
+        else:
+            a_ref = float(bldg_row.get("area_total_floor", 0.0) or 0.0)
+            if a_ref == 0.0:
+                a_ref = sum(float(r["surface_area"]) for _, r in floors_df.iterrows())
+            a_ref_total = a_ref * max(n_storeys, 1)
 
         return Building(
             identity=identity,
             elements=elements,
             thermal=thermal,
-            A_ref=a_ref * max(n_storeys, 1),
+            A_ref=a_ref_total,
         )
 
     # ── archetype resolution ─────────────────────────────────────────────────

@@ -4,6 +4,7 @@
 [![Documentation](https://readthedocs.org/projects/buem/badge/?version=latest)](https://buem.readthedocs.io/en/latest/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24392362.svg)](https://doi.org/10.5281/zenodo.24392362)
 
 BuEM computes **hourly heating and cooling demand** for buildings using the
 **ISO 13790 5R1C** thermal-network method combined with a linear-programming

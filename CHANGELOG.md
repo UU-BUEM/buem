@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.5.0] - 2026-11-20
+
+Model results change for Dutch buildings: reference floor area and
+dwelling counts now come from BAG where it registers them (see below).
+
+### Changed
+
+- **Dependencies pinned to released tags.** `weather` is pinned to
+  v1.10.2 and `occupancy` to v6.1.2 in `pyproject.toml` and
+  `infrastructure/env/buem_env.yml`, replacing `@main`, so each buem
+  release resolves to fixed versions of both. CI fetches its weather
+  fixture from the same `weather` tag.
+- **Reference floor area from BAG.** `LOD2Mapper` now takes `A_ref` from
+  the building's registered usable floor area (BAG `oppervlakte`, summed
+  over its verblijfsobjecten in active use) wherever the region table
+  carries it as `bag_floor_area`. The previous estimate, LOD2 footprint
+  times the 3D BAG storey count, overstated heated area by a median
+  factor of 1.53 in Loenen and 1.58 in Heeten (gross footprint; pitched
+  attics counted as storeys), which inflated ventilation loss, thermal
+  mass and internal surface area. It remains the fallback where no
+  register area exists or the registered one is below half the
+  footprint (`MIN_BAG_AREA_FRACTION_OF_FOOTPRINT`).
+- **Dwelling counts from BAG.** A residential building's
+  `residential_units` now comes from BAG's in-use `woonfunctie` units
+  (`residential_units_source = "bag"`), ahead of RIVM's
+  `aant_verblijfsobj` and the floor-area estimate, which remain
+  fallbacks. Modeled dwellings fall from 1,651 to 1,458 in Loenen
+  (village statistics: 1,424) and from 2,270 to 1,573 in Heeten.
+- `repair_dwelling_counts` leaves BAG-sourced counts unchanged and
+  estimates from the registered floor area where one exists.
+
+### Added
+
+- `nl_archetype_mapper.apply_bag_floor_area_and_units`, called by
+  `map_buildings` when BAG use functions are supplied, and
+  `PandUseSummary.total_area_m2`.
+- `scripts/refresh_nl_bag_attributes.py`: rewrites a region's
+  `lod2_building_feature.csv` with the two BAG attributes; run it on
+  every Dutch region directory before a population run.
+
+### Fixed
+
+- COSMO-REA6 years whose monthly archive is incomplete (2018 lacks
+  January) fall back to the annual export file, whose hour-ending stamp at
+  1 January 00:00 became 31 December 23:00 of the previous year after the
+  shift to hour-beginning labels, leaving 8,761 rows and failing
+  `extract_provider_weather`. The series is now cut to the calendar year.
+- `ModelBUEM` validation messages named `F_w` a window frame factor and
+  `F_f` a floor reflection factor; they are the non-perpendicular
+  incidence factor and the window frame fraction.
+
 ## [6.4.0] - 2026-11-20
 
 ### Added

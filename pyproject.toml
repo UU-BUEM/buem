@@ -53,16 +53,18 @@ dependencies = [
     # weather: https://github.com/UU-BUEM/weather -- compulsory (2026-08-03): all
     # solar/T/GHI/DHI/DNI attributes come from this package's real per-location
     # fetch, no bundled/local-file fallback. Not on PyPI/conda yet, so a direct
-    # git reference (PEP 508), tracked at @main -- see infrastructure/env/
-    # buem_env.yml's header comment for the reproducibility trade-off.
-    "weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@main",
+    # git reference (PEP 508), pinned to a released tag so that each buem
+    # release resolves to fixed weather code -- keep in step with
+    # infrastructure/env/buem_env.yml.
+    "weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@v1.10.2",
     # occupancy: https://github.com/UU-BUEM/occupancy -- compulsory (2026-08-07):
     # all Q_ig/elecLoad/occ_nothome/occ_sleeping attributes come from this
     # package's real HouseholdProfile/ServiceBuildingProfile generation, no
     # synthetic fallback. Not on PyPI/conda yet, so a direct git reference
-    # (PEP 508), tracked at @main -- see infrastructure/env/buem_env.yml's
-    # header comment for the reproducibility trade-off.
-    "occupancy @ git+https://github.com/UU-BUEM/occupancy.git@main",
+    # (PEP 508), pinned to a released tag so that each buem release resolves
+    # to fixed occupancy code -- keep in step with
+    # infrastructure/env/buem_env.yml.
+    "occupancy @ git+https://github.com/UU-BUEM/occupancy.git@v6.1.2",
 ]
 
 [project.optional-dependencies]

@@ -11,12 +11,13 @@
 #   conda env update -n buem_env -f infrastructure/env/buem_env.yml --prune
 #   pip install -e . --no-deps        # re-run if pyproject.toml changed
 #
-# occupancy/weather (below, under pip:) are tracked at @main rather than a
-# pinned tag, so `conda env update ... --prune` always picks up their
-# latest pushed changes -- re-run the update command above periodically
-# to refresh. Pin to a specific released tag instead (e.g. @v3.0.0) if you
-# need a reproducible, non-moving environment (e.g. a frozen release build
-# or CI you want stable across upstream pushes).
+# occupancy/weather (below, under pip:) are pinned to released tags, so a
+# given buem release always resolves to the same sibling code -- results
+# from a cited buem version stay reproducible, and CI does not change
+# under upstream pushes. Bump both pins here and in pyproject.toml together
+# when adopting a new sibling release, then re-run the update command above.
+# For development against an unreleased sibling, install its local checkout
+# on top (`pip install -e ../occupancy --no-deps`).
 #
 # Every runtime dependency occupancy/weather themselves declare (confirmed
 # live against their pyproject.toml on GitHub: numpy, pandas, python-dotenv,
@@ -119,7 +120,7 @@ dependencies:
     # occupancy (https://github.com/UU-BUEM/occupancy) and weather
     # (https://github.com/UU-BUEM/weather). Neither is published to PyPI or
     # a conda channel yet, so installed via a direct git reference (see the
-    # @main note above). All of their own dependencies are already
+    # pinning note above). All of their own dependencies are already
     # conda-installed above, so these two lines only add the package code
     # itself.
     # occupancy is COMPULSORY (2026-08-07): every Q_ig/elecLoad/
@@ -129,5 +130,5 @@ dependencies:
     # weather is COMPULSORY (2026-08-03): every T/GHI/DHI/DNI attribute
     # comes from its real per-location get_point_weather() fetch, no
     # bundled/local-file fallback -- buem will not import without it.
-    - occupancy @ git+https://github.com/UU-BUEM/occupancy.git@main
-    - weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@main
+    - occupancy @ git+https://github.com/UU-BUEM/occupancy.git@v6.1.2
+    - weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@v1.10.2

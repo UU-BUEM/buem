@@ -41,7 +41,7 @@ jobs:
 
       - name: Fetch weather CI fixture
         run: |
-          git clone --depth 1 --filter=blob:none --sparse https://github.com/UU-BUEM/weather.git /tmp/weather-ci-fixture
+          git clone --depth 1 --branch v1.10.2 --filter=blob:none --sparse https://github.com/UU-BUEM/weather.git /tmp/weather-ci-fixture
           git -C /tmp/weather-ci-fixture sparse-checkout set fixtures/ci
 
       - name: Lint

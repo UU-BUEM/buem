@@ -56,11 +56,12 @@ without one**. Either:
 `buem validate` checks whichever of the two you configured and fails if
 neither is reachable.
 
-`infrastructure/env/buem_env.yml` tracks `occupancy`/`weather` at `@main`
-(latest, not a pinned tag) — re-run `.\setup.ps1 env-update` /
-`setup.bat env-update` (or `conda env update -n buem_env -f
-infrastructure/env/buem_env.yml --prune`) after a `git pull` to pick up
-their latest changes.
+`infrastructure/env/buem_env.yml` and `pyproject.toml` pin `occupancy` and
+`weather` to released tags (currently `occupancy` v6.1.2, `weather` v1.10.2),
+so each BuEM release runs against fixed versions of both. Re-run
+`.\setup.ps1 env-update` / `setup.bat env-update` (or `conda env update -n
+buem_env -f infrastructure/env/buem_env.yml --prune`) after a `git pull`
+that changes those pins.
 
 > For detailed installation instructions (conda and Docker),
 > see the [Installation Guide](https://buem.readthedocs.io/en/latest/installation/index.html).
@@ -88,8 +89,8 @@ buem <command> --help  # Show options for a specific command
 
 > **Note:** `weather` and `occupancy` live in their own repositories within the
 > [UU-BUEM](https://github.com/UU-BUEM) organisation, but they are **required
-> dependencies, not optional extras** — `pip install buem` pulls both from
-> `@main` automatically. Every irradiance/temperature value comes from
+> dependencies, not optional extras** — `pip install buem` pulls both, at
+> their pinned release tags, automatically. Every irradiance/temperature value comes from
 > [`weather`](https://github.com/UU-BUEM/weather) and every internal-gain and
 > electricity profile from [`occupancy`](https://github.com/UU-BUEM/occupancy);
 > neither has a fallback.

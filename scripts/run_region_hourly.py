@@ -14,7 +14,17 @@ weather DataFrame fetched once per run), but also writes each building's
 hourly series to a second, long-format Parquet file:
 
     building_feature_id, time, T_e, T_air, T_m, T_sur,
-    Q_heat_kW, Q_cool_kW, Q_sol_win_kW, Q_sol_opq_kW, Q_int_kW, elec_kW
+    Q_heat_kW, Q_cool_kW, Q_sol_win_kW, Q_sol_opq_kW, Q_int_kW, elec_kW,
+    dhw_kW, cooking_gas_kW
+
+``dhw_kW``/``cooking_gas_kW`` are ``ModelBUEM``'s own hourly
+``dhw_kWh``/``cooking_gas_kWh`` series (set by ``_addDhwCooking()``,
+called from ``_readResults()`` at the end of ``sim_model()``) -- despite
+the ``kWh`` attribute name, both are already per-timestep (one hour's
+energy == that hour's average power), matching ``elec_kW``'s own naming.
+0.0 where a building has no DHW (``include_dhw=False``) or cooks
+electrically (``cooking_carrier != "gas"``, already inside ``elec_kW`` in
+that case -- not double-counted).
 
 alongside the usual per-building annual summary (mirroring
 ``batch._RESULT_COLUMNS`` plus the dead-band/peak-hour/mean-temperature
@@ -70,6 +80,7 @@ _PER_BUILDING_ERRORS = (OSError, ValueError, KeyError, IndexError, TypeError, At
 _HOURLY_COLUMNS = [
     "building_feature_id", "time", "T_e", "T_air", "T_m", "T_sur",
     "Q_heat_kW", "Q_cool_kW", "Q_sol_win_kW", "Q_sol_opq_kW", "Q_int_kW", "elec_kW",
+    "dhw_kW", "cooking_gas_kW",
 ]
 
 _SUMMARY_COLUMNS = [
@@ -151,6 +162,14 @@ def _process_one_building_hourly(building_feature_id: int, use_milp: bool) -> tu
         Q_sol_win = np.asarray(model.profiles["bQ_sol_Windows"], dtype=float)
         Q_sol_opq = np.asarray(model.profiles["bQ_sol_Opaque"], dtype=float)
         Q_int = merged["Q_ig"].to_numpy(dtype=float) if "Q_ig" in merged else np.zeros(len(times))
+        dhw_kW = (
+            np.asarray(model.dhw_kWh, dtype=float) if model.dhw_kWh is not None else np.zeros(len(times))
+        )
+        cooking_gas_kW = (
+            np.asarray(model.cooking_gas_kWh, dtype=float)
+            if model.cooking_gas_kWh is not None
+            else np.zeros(len(times))
+        )
 
         hourly = pd.DataFrame({
             "building_feature_id": np.full(len(times), building_feature_id, dtype=np.int64),
@@ -165,6 +184,8 @@ def _process_one_building_hourly(building_feature_id: int, use_milp: bool) -> tu
             "Q_sol_opq_kW": Q_sol_opq,
             "Q_int_kW": Q_int,
             "elec_kW": elec_kW,
+            "dhw_kW": dhw_kW,
+            "cooking_gas_kW": cooking_gas_kW,
         })
 
         row["heating_kWh"] = round(float(heat_kW.sum()), 2)
@@ -232,6 +253,7 @@ def run_hourly_batch(
         ("Q_heat_kW", pa.float32()), ("Q_cool_kW", pa.float32()),
         ("Q_sol_win_kW", pa.float32()), ("Q_sol_opq_kW", pa.float32()),
         ("Q_int_kW", pa.float32()), ("elec_kW", pa.float32()),
+        ("dhw_kW", pa.float32()), ("cooking_gas_kW", pa.float32()),
     ])
     summary_schema = pa.schema([
         ("building_feature_id", pa.int64()), ("status", pa.string()), ("error", pa.string()),

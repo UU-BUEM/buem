@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.4.0] - 2026-11-20
+
+### Added
+
+- `scripts/run_region_hourly.py`: the hourly Parquet output gains
+  `dhw_kW` and `cooking_gas_kW` columns, taken from `ModelBUEM`'s
+  hourly `dhw_kWh` and `cooking_gas_kWh` series. Each is 0.0 where a
+  building has no DHW or cooks electrically; electric cooking is
+  already counted in `elec_kW`.
+- README: a Zenodo DOI badge (10.5281/zenodo.24392362).
+
 ## [6.3.3] - 2026-11-20
 
 ### Added

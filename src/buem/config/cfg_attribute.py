@@ -26,6 +26,7 @@ from buem.config.building_registry import (
     DEFAULT_WEATHER_PROVIDER,
     DEFAULT_YEAR,
     HOUSEHOLD_EQUIPMENT_TYPES,
+    LEGACY_EV_EQUIPMENT_ID,
     RESIDENTIAL_BUILDING_TYPES,
     SERVICE_FLOOR_AREA_PER_OCCUPANT_M2,
     derive_service_capacity,
@@ -51,6 +52,7 @@ __all__ = [
     "DEFAULT_WEATHER_PROVIDER",
     "DEFAULT_YEAR",
     "HOUSEHOLD_EQUIPMENT_TYPES",
+    "LEGACY_EV_EQUIPMENT_ID",
     "RESIDENTIAL_BUILDING_TYPES",
     "SERVICE_FLOOR_AREA_PER_OCCUPANT_M2",
     "cfg",
@@ -99,11 +101,25 @@ dhi_profile = df_weather["DHI"]
 _household = HouseholdProfile(num_persons=DEFAULT_NUM_PERSONS, year=DEFAULT_YEAR)
 _elec = ElectricityConsumptionProfile(occupancy_profile=_household)
 _buem_inputs = to_buem_profiles(_elec.to_result())
-realistic_elec_load = _buem_inputs["elecLoad"].reindex(main_index, method="nearest", fill_value=0.0)
+
+
+def _same_hour(series: pd.Series) -> pd.Series:
+    """Align an occupancy series (hour-start labels, 00:00) to the weather
+    index (often hour-midpoint labels, 00:30) by the hour both fall in. A
+    nearest-label match breaks the 30-minute tie towards the next hour and
+    shifts the profile one hour early."""
+    source = series.copy()
+    source.index = series.index.floor("h")
+    aligned = source.reindex(main_index.floor("h"), fill_value=0.0)
+    aligned.index = main_index
+    return aligned
+
+
+realistic_elec_load = _same_hour(_buem_inputs["elecLoad"])
 realistic_elec_load.name = "elecLoad"
-q_ig_profile = _buem_inputs["Q_ig"].reindex(main_index, method="nearest", fill_value=0.0)
-occ_nothome_profile = _buem_inputs["occ_nothome"].reindex(main_index, method="nearest", fill_value=0.0)
-occ_sleeping_profile = _buem_inputs["occ_sleeping"].reindex(main_index, method="nearest", fill_value=0.0)
+q_ig_profile = _same_hour(_buem_inputs["Q_ig"])
+occ_nothome_profile = _same_hour(_buem_inputs["occ_nothome"])
+occ_sleeping_profile = _same_hour(_buem_inputs["occ_sleeping"])
 
 # Build attribute specs using realistic electricity load
 ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
@@ -346,6 +362,22 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
         1.0,
         doc="Intermittent heating reduction factor (ISO 13790 §13.2.2). TABULA F_red_htr1: 0.95 (AB/MFH), 0.90 (SFH/TH). 1.0 = no reduction.",
     ),
+    "n_air_window_max": AttributeSpec(
+        "n_air_window_max",
+        AttributeCategory.FIXED,
+        AttrType.FLOAT,
+        0.0,
+        doc=(
+            "Summer window ventilation (night flushing): the largest extra "
+            "air change rate [1/h] occupants can add by opening windows, on "
+            "top of n_air_infiltration + n_air_use. The LP opens them only "
+            "where it saves cooling, and only in hours where outdoor air "
+            "is at or below comfortT_lb or at least 1 K below the "
+            "window-free indoor temperature (a first pass), so ventilation "
+            "always cools. 0 = off (default, results unchanged). LP path "
+            "only; doubles the solve time when on."
+        ),
+    ),
     "ventControl": AttributeSpec("ventControl", AttributeCategory.BOOLEAN, AttrType.BOOL, False),
     "control": AttributeSpec("control", AttributeCategory.BOOLEAN, AttrType.BOOL, False),
     "building_type": AttributeSpec(
@@ -487,8 +519,10 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
         doc=(
             "Optional per-item household-equipment inclusion/exclusion map: "
             "{equipment_id: bool, ...}, where each equipment_id is one of "
-            "HOUSEHOLD_EQUIPMENT_TYPES (occupancy's 29 registered "
-            "appliances). true guarantees the item is treated as owned "
+            "HOUSEHOLD_EQUIPMENT_TYPES (occupancy's registered household "
+            "appliances). The former 'ev_charger' id is still accepted and "
+            "is translated to has_ev (an electric vehicle is no longer an "
+            "appliance item). true guarantees the item is treated as owned "
             "(overrides its normal ownership-probability draw); false "
             "guarantees it's excluded entirely; an omitted id uses "
             "occupancy's own archetype-adjusted default for that item. "
@@ -543,6 +577,160 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
             "elecLoad itself is overridden. Does not skip the occupancy "
             "call entirely -- that would also lose "
             "Q_ig/occ_nothome/occ_sleeping."
+        ),
+    ),
+    "has_ev": AttributeSpec(
+        "has_ev",
+        AttributeCategory.BOOLEAN,
+        AttrType.BOOL,
+        True,
+        doc=(
+            "Whether the household owns an electric vehicle (residential "
+            "building_type only). true (default): one EV per dwelling; "
+            "false: none; null: unknown -- each dwelling draws ownership "
+            "from ev_ownership_probability (occupancy's default 0.20). A "
+            "multi-dwelling building without an explicit has_ev draws per "
+            "dwelling. EV home charging is reported as ev_charging_kW and "
+            "is never part of elecLoad: it is not an internal heat gain."
+        ),
+    ),
+    "ev_ownership_probability": AttributeSpec(
+        "ev_ownership_probability",
+        AttributeCategory.FIXED,
+        AttrType.FLOAT,
+        None,
+        doc=(
+            "EV ownership probability in [0, 1] for households whose EV "
+            "ownership is unknown. Supplying it without an explicit has_ev "
+            "makes ownership unknown (drawn). None uses occupancy's own "
+            "default."
+        ),
+    ),
+    "ev_charger_kw": AttributeSpec(
+        "ev_charger_kw",
+        AttributeCategory.FIXED,
+        AttrType.FLOAT,
+        None,
+        doc=(
+            "Home EV charger power in kW (None: occupancy's default, 7.4 "
+            "kW). Charging sessions shorten or lengthen accordingly; the "
+            "car's own on-board limit still applies."
+        ),
+    ),
+    "ev_config": AttributeSpec(
+        "ev_config",
+        AttributeCategory.OTHER,
+        AttrType.OBJECT,
+        None,
+        doc=(
+            "Optional overrides of occupancy's EV parameters (a mapping "
+            "deep-merged over occupancy's households/data/ev.json, e.g. "
+            "survey-derived departure/arrival distributions or battery "
+            "size). Unknown keys raise."
+        ),
+    ),
+    "ev_charging_kW": AttributeSpec(
+        "ev_charging_kW",
+        AttributeCategory.FIXED,
+        AttrType.SERIES,
+        None,
+        doc=(
+            "Measured home EV charging (kW, hourly), e.g. from a survey "
+            "charging log or a sub-meter. When given it replaces occupancy's "
+            "EV simulation for the whole building, and is what "
+            "elecLoad_includes_ev subtracts from a metered total."
+        ),
+    ),
+    "elecLoad_includes_ev": AttributeSpec(
+        "elecLoad_includes_ev",
+        AttributeCategory.BOOLEAN,
+        AttrType.BOOL,
+        False,
+        doc=(
+            "Only with use_provided_elecLoad: the supplied elecLoad is a "
+            "meter total that includes home EV charging. The measured "
+            "ev_charging_kW series is then subtracted before elecLoad is "
+            "used as an internal gain. Requires ev_charging_kW when the "
+            "household has an EV: a simulated EV series matches a meter "
+            "only on average, not hour by hour."
+        ),
+    ),
+    "has_pv": AttributeSpec(
+        "has_pv",
+        AttributeCategory.BOOLEAN,
+        AttrType.BOOL,
+        False,
+        doc=(
+            "Whether the building already has a rooftop photovoltaic (PV) "
+            "system. Any building_type. A building fact only: buem is a "
+            "demand model and does not compute PV output (that is "
+            "conversion-technologies' generation_technologies, consistent "
+            "with EnerPlanET's pysam-pv); the flag does not change the "
+            "thermal results. Sending pv_capacity_kwp or pv_kW without "
+            "has_pv implies has_pv=true."
+        ),
+    ),
+    "pv_capacity_kwp": AttributeSpec(
+        "pv_capacity_kwp",
+        AttributeCategory.FIXED,
+        AttrType.FLOAT,
+        None,
+        doc=(
+            "Installed PV peak power in kWp (> 0). None with has_pv=true: "
+            "the size is unknown and left to the downstream model."
+        ),
+    ),
+    "pv_kW": AttributeSpec(
+        "pv_kW",
+        AttributeCategory.FIXED,
+        AttrType.SERIES,
+        None,
+        doc=(
+            "The building's PV output (kW AC, hourly): inverter data, or a "
+            "modelled series from conversion-technologies' PV generation. "
+            "Used only by elecLoad_net_of_pv."
+        ),
+    ),
+    "elecLoad_net_of_pv": AttributeSpec(
+        "elecLoad_net_of_pv",
+        AttributeCategory.BOOLEAN,
+        AttrType.BOOL,
+        False,
+        doc=(
+            "Only with use_provided_elecLoad: the supplied elecLoad is a net "
+            "meter reading (import minus export, may be negative) of a "
+            "building with PV. buem adds the supplied pv_kW back to get "
+            "gross use before it becomes an internal gain. Refused with "
+            "has_battery: the battery's charging and discharging are hidden "
+            "in the net reading. A modelled pv_kW follows the weather data, "
+            "not the real panels, so hourly gross use is then an estimate; "
+            "inverter data is exact."
+        ),
+    ),
+    "has_battery": AttributeSpec(
+        "has_battery",
+        AttributeCategory.BOOLEAN,
+        AttrType.BOOL,
+        False,
+        doc=(
+            "Whether the building already has a stationary home battery "
+            "(not the electric vehicle's battery: see has_ev). Any "
+            "building_type. buem does not model battery operation; the flag "
+            "and battery_capacity_kwh are carried to the outputs for an "
+            "energy-system model, which decides charging and discharging. "
+            "Sending battery_capacity_kwh without has_battery implies "
+            "has_battery=true."
+        ),
+    ),
+    "battery_capacity_kwh": AttributeSpec(
+        "battery_capacity_kwh",
+        AttributeCategory.FIXED,
+        AttrType.FLOAT,
+        None,
+        doc=(
+            "Usable energy capacity of the stationary battery in kWh (> 0). "
+            "None with has_battery=true: the size is unknown and left to "
+            "the downstream model."
         ),
     ),
     "weather_provider": AttributeSpec(

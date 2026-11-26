@@ -70,16 +70,25 @@ def test_multi_dwelling_total_energy_matches_single_household_scaled():
     """The diversified aggregate should still land close to one household's
     annual total multiplied by the dwelling count -- diversification
     changes the *shape* of the peak, not the building's overall energy
-    use."""
+    use.
+
+    The reference is the mean of several independently seeded single
+    households, not one: a single household's annual total is one draw
+    from occupancy's stochastic appliance-ownership model and spans roughly
+    +/-30% across seeds, so comparing a 20-dwelling average against one
+    draw tests the luck of that draw rather than the aggregation."""
     attrs = _residential_attrs()
     attrs["seed"] = 123
 
-    single_attrs = dict(attrs)
-    single_attrs["residential_units"] = 1.0
-    single_merged = AttributeBuilder(
-        payload_attrs=single_attrs, building_id="blockA"
-    ).build()
-    single_total = float(single_merged["elecLoad"].sum())
+    single_totals = []
+    for seed in range(120, 128):
+        single_attrs = dict(attrs)
+        single_attrs.update(seed=seed, residential_units=1.0)
+        single_merged = AttributeBuilder(
+            payload_attrs=single_attrs, building_id="blockA"
+        ).build()
+        single_totals.append(float(single_merged["elecLoad"].sum()))
+    single_total = float(np.mean(single_totals))
 
     multi_attrs = dict(attrs)
     multi_attrs["residential_units"] = 20.0

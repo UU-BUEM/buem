@@ -852,11 +852,16 @@ class GeoJsonValidator:
         # merged_attrs and does its own numeric casts, so a plain
         # passthrough is sufficient here. seed is deliberately NOT
         # forwarded: it is an internal reproducibility knob, not part of
-        # the EnerPlanET request contract.
+        # the EnerPlanET request contract. The EV, PV and home-battery fields
+        # (v4 draft, 2026-11-24) are checked by AttributeBuilder
+        # (validator.validate_installations, occupancy's EV config).
         for key in ('building_type', 'construction_period', 'country', 'n_storeys',
                     'neighbour_status', 'attic_condition', 'cellar_condition',
                     'capacity', 'num_persons', 'residential_units', 'archetype',
-                    'equipment', 'window_to_wall_ratio'):
+                    'equipment', 'window_to_wall_ratio',
+                    'has_ev', 'ev_ownership_probability', 'ev_charger_kw',
+                    'has_pv', 'pv_capacity_kwp',
+                    'has_battery', 'battery_capacity_kwh'):
             if key in building:
                 building_attributes[key] = building[key]
 

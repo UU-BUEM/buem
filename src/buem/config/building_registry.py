@@ -165,14 +165,13 @@ def derive_service_capacity(building_type: str, floor_area_m2: float | None) -> 
     return max(1, round(float(floor_area_m2) / density))
 
 
-# Household equipment ids, hand-copied from occupancy's
-# households/data/equipment.json (29 items). Unlike
-# RESIDENTIAL_BUILDING_TYPES's service-type counterpart
-# (occupancy.SERVICE_BUILDING_TYPES), occupancy exposes no stable
-# top-level export for its equipment registry, so this set can drift out
-# of sync if an item is added/renamed/removed there. Used only to
-# validate the optional "equipment" attribute's include/exclude item ids
-# before they reach occupancy.ElectricityConsumptionProfile.
+# Household equipment ids, copied from occupancy's
+# households/data/equipment.json (36 items) rather than imported, because
+# this module must stay free of occupancy/weather imports (see the module
+# docstring). tests/test_equipment_selection.py guards against drift from
+# occupancy's registry. Used only to validate the optional "equipment"
+# attribute's include/exclude item ids before they reach
+# occupancy.ElectricityConsumptionProfile.
 HOUSEHOLD_EQUIPMENT_TYPES = frozenset({
     "chest_freezer", "fridge_freezer", "refrigerator", "upright_freezer",
     "answer_machine", "cassette_cd_player", "clock", "cordless_telephone",
@@ -180,6 +179,13 @@ HOUSEHOLD_EQUIPMENT_TYPES = frozenset({
     "tv_1", "tv_2", "tv_3", "vcr_dvd", "tv_receiver_box", "hob", "oven",
     "microwave", "kettle", "small_cooking_group", "dish_washer",
     "tumble_dryer", "washing_machine", "washer_dryer", "lighting",
-    "air_fryer", "coffee_machine", "ev_charger", "laptop", "robot_vacuum",
+    "air_fryer", "coffee_machine", "laptop", "robot_vacuum",
     "smart_speaker", "streaming_stick", "wifi_router",
 })
+
+# Former equipment id of the household electric vehicle. occupancy now
+# models the EV as its own sub-model (trips, state of charge, plug-in
+# behaviour) whose charging is not an internal heat gain, selected with the
+# has_ev attribute. An "equipment" selector that still names this id is
+# translated to has_ev instead of being rejected.
+LEGACY_EV_EQUIPMENT_ID = "ev_charger"

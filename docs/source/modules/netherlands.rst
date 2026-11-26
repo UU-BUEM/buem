@@ -784,9 +784,15 @@ Defaults, and why they are what they are:
      - ``building_registry.DEFAULT_COMFORT_T_LB``/``_UB``.
 
    * - Window-to-wall ratio
-     - 0.5
-     - ``building_registry.DEFAULT_WINDOW_TO_WALL_RATIO``, applied to each
-       exposed wall; overridable per request.
+     - per archetype (TABULA NL: ~0.17–0.23 detached, 0.30–0.39 terraced,
+       0.23–0.51 multi-family)
+     - the archetype's own TABULA glazing share of the gross facade,
+       ``window / (wall + window)``
+       (``archetype_spec.tabula_window_to_wall_ratio``), applied to each
+       exposed wall; ``building_registry.DEFAULT_WINDOW_TO_WALL_RATIO``
+       (0.5) only when the archetype has no areas (service buildings) or
+       on the live request path; overridable per request. Since
+       2026-11-25; before, 0.5 applied to every building.
 
 Whole-region run
 ^^^^^^^^^^^^^^^^^^

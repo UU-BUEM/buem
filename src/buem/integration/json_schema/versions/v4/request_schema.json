@@ -152,6 +152,39 @@
           "enum": ["B_Alone", "B_N1", "B_N2"],
           "description": "Attached neighbours: B_Alone detached, B_N1 one shared wall, B_N2 two shared walls"
         },
+        "has_ev": {
+          "type": ["boolean", "null"],
+          "description": "Buem-side proposal, added to the v4 draft 2026-11-23. Not present in EnerPlanET's real v4. Whether the household owns an electric vehicle (residential building_type only). true: one EV per dwelling; false: none; null: unknown -- each dwelling draws ownership from ev_ownership_probability. Omit for the default (true for a single dwelling; drawn per dwelling for a multi-dwelling building or when ev_ownership_probability is sent). EV home charging is returned separately from the appliance electricity load and is never treated as an internal heat gain. Replaces the former equipment.ev_charger flag."
+        },
+        "ev_ownership_probability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Buem-side proposal, added to the v4 draft 2026-11-23. Not present in EnerPlanET's real v4. Probability that a household owns an EV, used when ownership is unknown (has_ev null or omitted). Omit to use occupancy's default (0.20)."
+        },
+        "ev_charger_kw": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Buem-side proposal, added to the v4 draft 2026-11-23. Not present in EnerPlanET's real v4. Home EV charger power in kW (default 7.4). Charging sessions shorten or lengthen accordingly; the car's own on-board limit still applies."
+        },
+        "has_pv": {
+          "type": "boolean",
+          "description": "Buem-side proposal, added to the v4 draft 2026-11-24. Not present in EnerPlanET's real v4. Whether the building already has a rooftop photovoltaic system (any building_type). A building fact only: buem is a demand model and does not compute PV output (conversion-technologies' PV generation does, consistent with EnerPlanET's pysam-pv); the flag does not change the thermal results. Default false; sending pv_capacity_kwp without has_pv implies true."
+        },
+        "pv_capacity_kwp": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Buem-side proposal, added to the v4 draft 2026-11-24. Not present in EnerPlanET's real v4. Installed PV peak power in kWp. Omit when has_pv is true but the size is unknown."
+        },
+        "has_battery": {
+          "type": "boolean",
+          "description": "Buem-side proposal, added to the v4 draft 2026-11-24. Not present in EnerPlanET's real v4. Whether the building already has a stationary home battery (any building_type; not the electric vehicle's battery, see has_ev). buem does not model battery operation; the flag is returned with the results for an energy-system model. Default false; sending battery_capacity_kwh without has_battery implies true."
+        },
+        "battery_capacity_kwh": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Buem-side proposal, added to the v4 draft 2026-11-24. Not present in EnerPlanET's real v4. Usable energy capacity of the stationary battery in kWh. Omit when has_battery is true but the size is unknown."
+        },
         "equipment": {
           "type": "object",
           "description": "Buem-side proposal, live as of the v4 promotion (2026-08-14; boolean-per-item shape as of the same date, replacing an earlier {mode,items} shape). Not present in EnerPlanET's real v4. Per-item household-equipment inclusion/exclusion: true forces the item to be treated as owned (bypassing occupancy's own ownership-probability draw for it), false forces it excluded entirely, and an omitted id falls back to occupancy's own default behavior for that item (including its normal stochastic ownership draw and any archetype-specific tuning). Keys are validated against the property list below -- additionalProperties: false rejects an unrecognized id at the schema layer, not just at runtime. Residential building_type only -- ignored (with a logged warning) for service-building types, since occupancy.ServiceBuildingProfile has no per-item equipment selection yet (see .claude/occupancy_module_activities.md). The property list is hand-copied from occupancy's households/data/equipment.json -- occupancy has no stable top-level export for this registry yet (same caveat building_type's enum carries for SERVICE_BUILDING_TYPES pre-promotion). Omit entirely to use occupancy's own default equipment set, unchanged.",
@@ -187,7 +220,6 @@
             "lighting":            { "type": "boolean" },
             "air_fryer":           { "type": "boolean" },
             "coffee_machine":      { "type": "boolean" },
-            "ev_charger":          { "type": "boolean" },
             "laptop":              { "type": "boolean" },
             "robot_vacuum":        { "type": "boolean" },
             "smart_speaker":       { "type": "boolean" },

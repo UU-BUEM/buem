@@ -75,6 +75,37 @@ class ArchetypeSpec:
     construction_period: str
     neighbour_status: str
 
+    # Glazing share of the gross facade (window / (wall + window)) from the
+    # archetype's own TABULA areas, applied uniformly to every exposed
+    # wall. None (service buildings, or no TABULA areas) falls back to
+    # building_registry.DEFAULT_WINDOW_TO_WALL_RATIO.
+    window_to_wall_ratio: float | None = None
+
+
+def tabula_window_to_wall_ratio(tabula_row: pd.Series) -> float | None:
+    """Glazing share of the gross facade, ``window / (wall + window)``, from
+    a TABULA row's own areas (``A_Window_1/2`` over those plus
+    ``A_Wall_1/2/3``); horizontal glazing is excluded (it is a separate
+    skylight element). ``None`` when the row carries no usable areas.
+
+    TABULA's *per-direction* window columns are not used (the NL typology
+    puts all glazing on East/West, see element_factory); only the totals,
+    which carry no orientation assumption. The ratio is per archetype:
+    TABULA NL gives roughly 0.17-0.23 for detached houses, 0.30-0.39 for
+    terraced houses and 0.23-0.51 for multi-family buildings.
+    """
+    windows = sum(
+        safe_series_float(tabula_row, c, 0.0, warn=False) or 0.0
+        for c in ("A_Window_1", "A_Window_2")
+    )
+    walls = sum(
+        safe_series_float(tabula_row, c, 0.0, warn=False) or 0.0
+        for c in ("A_Wall_1", "A_Wall_2", "A_Wall_3")
+    )
+    if windows <= 0 or walls <= 0:
+        return None
+    return windows / (windows + walls)
+
 
 def spec_from_tabula(
     tabula_row: pd.Series,
@@ -129,6 +160,7 @@ def spec_from_tabula(
     )
 
     return ArchetypeSpec(
+        window_to_wall_ratio=tabula_window_to_wall_ratio(tabula_row),
         wall_U=adjusted["Wall"], wall_b=wall_b,
         roof_U=adjusted["Roof"], roof_b=roof_b,
         floor_U=adjusted["Floor"], floor_b=floor_b,

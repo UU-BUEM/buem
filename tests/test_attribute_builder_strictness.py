@@ -84,3 +84,30 @@ def test_reindex_or_raise_passes_through_aligned_series():
     aligned = pd.Series(range(24), index=target_index, dtype=float)
     result = _reindex_or_raise(aligned, target_index, "Q_ig")
     assert result.equals(aligned)
+
+
+def test_reindex_or_raise_matches_the_same_hour_on_half_hour_weather():
+    """Occupancy labels an hour by its start (00:00), the weather by its
+    midpoint (00:30). Each weather hour must get the same hour's value --
+    not the next hour's, and the year's last hour must not be repeated."""
+    hours = pd.date_range("2018-01-01", periods=48, freq="h")
+    weather = hours + pd.Timedelta(minutes=30)
+    profile = pd.Series(range(48), index=hours, dtype=float)
+    result = _reindex_or_raise(profile, weather, "Q_ig")
+    assert result.index.equals(weather)
+    assert result.tolist() == list(range(48))
+
+
+def test_reindex_or_raise_matches_half_hour_series_onto_hour_index():
+    """The reverse direction (a caller's half-hour meter series onto
+    occupancy's on-the-hour index) pairs the same hours too."""
+    hours = pd.date_range("2018-01-01", periods=24, freq="h")
+    meter = pd.Series(range(24), index=hours + pd.Timedelta(minutes=30), dtype=float)
+    result = _reindex_or_raise(meter, hours, "elecLoad")
+    assert result.tolist() == list(range(24))
+
+
+def test_reindex_or_raise_rejects_sub_hourly_series():
+    index = pd.date_range("2018-01-01", periods=48, freq="30min")
+    with pytest.raises(ValueError, match="more than one value"):
+        _reindex_or_raise(pd.Series(1.0, index=index), index, "Q_ig")

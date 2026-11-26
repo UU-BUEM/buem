@@ -88,6 +88,7 @@ _RESULT_COLUMNS = [
     "heating_kWh",
     "cooling_kWh",
     "elec_kWh",
+    "ev_kWh",
     "dhw_kWh",
     "cooking_gas_kWh",
     # Carried straight through from the source table rather than recomputed,
@@ -270,6 +271,10 @@ def _process_one_building(building_feature_id: int, use_milp: bool) -> dict[str,
         row["heating_kWh"] = round(float(pd.Series(model.heating_load).sum()), 2)
         row["cooling_kWh"] = round(float(pd.Series(model.cooling_load).abs().sum()), 2)
         row["elec_kWh"] = round(float(merged["elecLoad"].sum()), 2)
+        ev_series = merged.get("ev_charging_kW")
+        row["ev_kWh"] = (
+            round(float(ev_series.sum()), 2) if isinstance(ev_series, pd.Series) else 0.0
+        )
         row["dhw_kWh"] = round(float(model.dhw_kWh.sum()), 2) if model.dhw_kWh is not None else 0.0
         row["cooking_gas_kWh"] = (
             round(float(model.cooking_gas_kWh.sum()), 2) if model.cooking_gas_kWh is not None else 0.0
@@ -495,6 +500,7 @@ def run_batch(config: BatchConfig, output_path: str | Path) -> Path:
         ("heating_kWh", pa.float64()),
         ("cooling_kWh", pa.float64()),
         ("elec_kWh", pa.float64()),
+        ("ev_kWh", pa.float64()),
         ("dhw_kWh", pa.float64()),
         ("cooking_gas_kWh", pa.float64()),
         ("neighbour_status", pa.string()),

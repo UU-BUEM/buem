@@ -220,10 +220,13 @@ class LOD2Mapper:
         #    live request-handling path — see element_factory.synthesize_openings).
         # Windows are sized from each wall's own area, not from TABULA's
         # per-direction window columns -- see
-        # element_factory.uniform_window_ratios(). Doors still use the
-        # archetype's own door-to-wall ratio, which carries no orientation
-        # assumption.
-        win_ratios = uniform_window_ratios()
+        # element_factory.uniform_window_ratios(). The share is the
+        # archetype's own TABULA glazing share of the gross facade
+        # (archetype_spec.tabula_window_to_wall_ratio), falling back to
+        # DEFAULT_WINDOW_TO_WALL_RATIO when the archetype has none. Doors
+        # still use the archetype's own door-to-wall ratio, which carries
+        # no orientation assumption.
+        win_ratios = uniform_window_ratios(spec.window_to_wall_ratio)
         door_ratio = spec.door_ratio
         horizontal = spec.horizontal_window_area
         n_air_use = spec.n_air_use

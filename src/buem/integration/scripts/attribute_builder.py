@@ -5,7 +5,7 @@ Generate weather and electricity profiles, and align timeseries indices.
 import logging
 import math
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pandas as pd
@@ -19,6 +19,8 @@ from occupancy import (  # type: ignore[import]
     ServiceBuildingProfile,
     building_seed,
     generate_dhw_draws,
+    load_ev_config,
+    subtract_ev_load,
     to_buem_profiles,
 )
 
@@ -27,11 +29,12 @@ from buem.config.cfg_attribute import (
     ATTRIBUTE_SPECS,
     DEFAULT_ARCHETYPE_BY_BUILDING_TYPE,
     HOUSEHOLD_EQUIPMENT_TYPES,
+    LEGACY_EV_EQUIPMENT_ID,
     RESIDENTIAL_BUILDING_TYPES,
     derive_service_capacity,
 )
 from buem.config.reference_values import resolve_num_persons
-from buem.config.validator import validate_cfg
+from buem.config.validator import INSTALLATIONS, validate_cfg, validate_installations
 from buem.config.weather_cache import get_or_fetch_weather
 from buem.thermal import dhw_cooking
 
@@ -44,13 +47,26 @@ def _reindex_or_raise(series: pd.Series, target_index: pd.DatetimeIndex, name: s
     occupancy profile and weather) should surface as an error, not a
     plausible-looking zero internal-gains/electricity result for those hours.
 
-    ``method="nearest"`` alone would happily match e.g. a 2019 profile onto a
-    2018 index (nearest always finds *some* label), which is exactly the
-    silent-wrong-data failure mode this guards against -- a ``tolerance`` is
-    required so a genuinely out-of-range timestamp reindexes to NaN instead.
-    Half an hour assumes this repo's consistently-hourly resolution.
+    Timestamps are matched by the hour they fall in: occupancy labels an
+    hour by its start (00:00 = 00:00-01:00), the weather by its midpoint
+    (00:30). Both floor to 00:00, so each weather hour gets the occupancy
+    value of the same hour, in either direction of alignment. A nearest-
+    label match does not do this: 00:30 is exactly as far from 00:00 as from
+    01:00, pandas then takes the later label, and every series came out one
+    hour early, with the year's first hour dropped and its last hour
+    repeated. Exact matching on the floored hour also keeps the guard
+    against e.g. a 2019 profile on a 2018 index: those hours do not match
+    and reindex to NaN. Assumes this repo's consistently-hourly resolution.
     """
-    aligned = series.reindex(target_index, method="nearest", tolerance=pd.Timedelta(minutes=30))
+    source = series.copy()
+    source.index = series.index.floor("h")
+    if source.index.has_duplicates:
+        raise ValueError(
+            f"{name} has more than one value in an hour -- expected an hourly "
+            "series to align to the weather timeseries."
+        )
+    aligned = source.reindex(target_index.floor("h"))
+    aligned.index = target_index
     if aligned.isna().any():
         n_missing = int(aligned.isna().sum())
         raise ValueError(
@@ -71,7 +87,52 @@ _OCCUPANCY_BLEND_TOLERANCE = 0.01
 # occ_sleeping are dimensionless presence fractions rather than
 # magnitudes, and cooking_active is a boolean activity flag that a linear
 # blend would turn into a meaningless fraction of a flag.
-_BLENDED_PROFILE_KEYS = ("Q_ig", "elecLoad")
+_BLENDED_PROFILE_KEYS = (
+    "Q_ig", "elecLoad",
+    "ev_charging_kw", "ev_plugged_in", "ev_drive_kwh", "ev_away_charging_kwh",
+    "ev_stored_kwh",
+)
+
+# Key under which occupancy.to_buem_profiles() returns home EV charging,
+# and the attribute buem stores it under. The EV is kept out of elecLoad:
+# its charger sits outside the conditioned zone, so its power is not an
+# internal heat gain.
+_EV_ATTRIBUTE = "ev_charging_kW"
+
+# Every EV series occupancy.to_buem_profiles() returns, mapped to the
+# attribute buem stores it under: home charging (kW), the share of each
+# hour the car is plugged in at home, battery energy used for driving
+# (kWh), grid-side energy charged away from home (kWh) and the energy
+# stored in the battery at the end of each hour (kWh). All but the first
+# describe the EV as a flexible demand for an energy-system model; the
+# stored energy lets the model's battery start and end the year at the
+# simulated car's levels. For a multi-dwelling building they are summed
+# over dwellings, so the plugged-in series becomes the number of cars
+# plugged in.
+_EV_SERIES = {
+    "ev_charging_kw": "ev_charging_kW",
+    "ev_plugged_in": "ev_plugged_in",
+    "ev_drive_kwh": "ev_drive_kWh",
+    "ev_away_charging_kwh": "ev_away_charging_kWh",
+    "ev_stored_kwh": "ev_stored_kWh",
+}
+
+
+@dataclass(frozen=True)
+class _EVOptions:
+    """Resolved EV inputs for one building's occupancy generation."""
+
+    has_ev: bool | None
+    ev_config: Any
+    measured_kw: pd.Series | None
+
+    def household_kwargs(self) -> dict[str, Any]:
+        """Keyword arguments for occupancy.ElectricityConsumptionProfile.
+        A measured series replaces the simulation for the whole building,
+        so per-household simulation is switched off in that case."""
+        if self.measured_kw is not None:
+            return {"has_ev": False}
+        return {"has_ev": self.has_ev, "ev_config": self.ev_config}
 
 # occupancy's equipment category covering hob, oven, microwave, kettle and
 # small cooking appliances -- the set whose energy buem reports as cooking.
@@ -196,7 +257,7 @@ def _generate_cooking_energy(
     if not kitchen:
         return None
     profile = ElectricityConsumptionProfile(
-        household, equipment=kitchen, seed=seed,
+        household, equipment=kitchen, seed=seed, has_ev=False,
     ).to_result().profile
     return profile["total_power_kwh"].rename("cooking_kwh")
 
@@ -256,7 +317,9 @@ def _resolve_equipment_table(
     if non_bool:
         raise ValueError(f"equipment values must be true/false, got {non_bool!r}.")
 
-    base_table = ElectricityConsumptionProfile(household, seed=seed).get_equipment_table()
+    base_table = ElectricityConsumptionProfile(
+        household, seed=seed, has_ev=False,
+    ).get_equipment_table()
     result: dict[str, Any] = {}
     for key, spec in base_table.items():
         if key not in equipment_spec:
@@ -322,6 +385,10 @@ class AttributeBuilder:
         """
         # Step 1: Merge sources (payload > db > defaults)
         self.merge_sources()
+        self._imply_installation_flags()
+        installation_issues = validate_installations(self.merged_attrs)
+        if installation_issues:
+            raise ValueError(f"Attribute validation failed: {'; '.join(installation_issues)}")
 
         # Step 2: Refuse to silently model the generic example house in place
         # of a real building the caller forgot to fully specify.
@@ -379,6 +446,44 @@ class AttributeBuilder:
         self.merged_attrs.update(self.payload_attrs)
         self._provided_keys.update(self.payload_attrs.keys())
     
+    def _imply_installation_flags(self) -> None:
+        """A PV or battery capacity sent without its has_pv/has_battery flag
+        means the installation exists. An explicit flag is left as sent, so
+        has_pv=false with a capacity still fails validation. A supplied
+        PV output series (pv_kW) implies has_pv too."""
+        for flag, capacity_key in INSTALLATIONS:
+            if (
+                flag not in self._provided_keys
+                and self.merged_attrs.get(capacity_key) is not None
+            ):
+                self.merged_attrs[flag] = True
+        if "has_pv" not in self._provided_keys and self.merged_attrs.get("pv_kW") is not None:
+            self.merged_attrs["has_pv"] = True
+
+    def _add_pv_to_net_meter(self, meter_net: pd.Series) -> pd.Series:
+        """Gross use from a net meter reading of a building with PV: the
+        supplied PV output (``pv_kW``: inverter data, or a modelled series
+        from conversion-technologies' PV generation) is added back hour by
+        hour. buem does not compute PV output itself."""
+        pv = self.merged_attrs.get("pv_kW")
+        if pv is None:
+            raise ValueError(
+                "elecLoad_net_of_pv needs the building's PV output as a pv_kW "
+                "series (inverter data or a modelled PV profile)."
+            )
+        if not isinstance(pv, pd.Series):
+            raise TypeError(f"pv_kW must be a pandas Series, got {type(pv).__name__}.")
+        pv = _reindex_or_raise(pv, meter_net.index, "pv_kW")
+        gross = meter_net + pv
+        negative = int((gross < -1e-9).sum())
+        if negative:
+            logger.warning(
+                "Net meter + PV output is negative in %d hour(s) (the PV series "
+                "is lower than the real export there); those hours are set to 0.",
+                negative,
+            )
+        return gross.clip(lower=0.0).rename(meter_net.name)
+
     def generate_weather_profile(self):
         """Fetch a location-specific weather DataFrame via the (compulsory)
         weather package, unless opted out. A fetch that fails for the
@@ -442,9 +547,70 @@ class AttributeBuilder:
         # None; a real float default is always passed above.
         return max(1.0, float(resolved if resolved is not None else DEFAULT_NUM_PERSONS))
 
+    def _resolve_ev_options(
+        self, equipment_spec: Any, *, multi_dwelling: bool,
+    ) -> tuple[_EVOptions, Any]:
+        """Resolve the household EV inputs and return them with
+        ``equipment_spec`` stripped of the legacy ``ev_charger`` id.
+
+        Precedence for ownership: an explicit ``has_ev`` wins; otherwise a
+        legacy ``equipment.ev_charger`` flag; otherwise ownership is
+        unknown (drawn per dwelling from the ownership probability) when
+        ``ev_ownership_probability`` is supplied or the building has
+        several dwellings; otherwise the ``has_ev`` attribute default
+        (``True``, one EV per household).
+        """
+        provided = self._provided_keys
+        has_ev = self.merged_attrs.get("has_ev", ATTRIBUTE_SPECS["has_ev"].default)
+
+        if isinstance(equipment_spec, dict) and LEGACY_EV_EQUIPMENT_ID in equipment_spec:
+            legacy = equipment_spec[LEGACY_EV_EQUIPMENT_ID]
+            if not isinstance(legacy, bool):
+                raise ValueError(
+                    f"equipment values must be true/false, got "
+                    f"{{{LEGACY_EV_EQUIPMENT_ID!r}: {legacy!r}}}."
+                )
+            logger.warning(
+                "equipment.%s is deprecated: an electric vehicle is no longer "
+                "an appliance item; use has_ev instead.", LEGACY_EV_EQUIPMENT_ID,
+            )
+            if "has_ev" not in provided:
+                has_ev = legacy
+            equipment_spec = {
+                key: value for key, value in equipment_spec.items()
+                if key != LEGACY_EV_EQUIPMENT_ID
+            } or None
+            provided = provided | {"has_ev"}
+
+        if has_ev is not None and not isinstance(has_ev, bool):
+            raise ValueError(f"has_ev must be true, false or null, got {has_ev!r}.")
+
+        overrides: dict[str, Any] = dict(self.merged_attrs.get("ev_config") or {})
+        probability = self.merged_attrs.get("ev_ownership_probability")
+        if probability is not None:
+            overrides["ownership_probability"] = float(probability)
+        if "has_ev" not in provided and (probability is not None or multi_dwelling):
+            has_ev = None
+        charger_kw = self.merged_attrs.get("ev_charger_kw")
+        if charger_kw is not None:
+            home_mode = load_ev_config(overrides).home_mode.name
+            modes = dict(overrides.get("charging_modes") or {})
+            modes[home_mode] = {**modes.get(home_mode, {}), "power_kw": float(charger_kw)}
+            overrides["charging_modes"] = modes
+        # Validates every override (unknown keys, out-of-range values) once,
+        # up front, instead of failing inside each household generation.
+        ev_config = load_ev_config(overrides) if overrides else None
+
+        measured = self.merged_attrs.get(_EV_ATTRIBUTE)
+        if measured is not None and not isinstance(measured, pd.Series):
+            raise ValueError(
+                f"{_EV_ATTRIBUTE} must be a pandas Series, got {type(measured).__name__}."
+            )
+        return _EVOptions(has_ev, ev_config, measured), equipment_spec
+
     def _generate_household(
         self, num_persons: int, archetype: str, weather_year: int,
-        seed: Any, equipment_spec: Any,
+        seed: Any, equipment_spec: Any, ev: _EVOptions | None = None,
     ) -> tuple[Any, pd.Series | None, pd.Series | None, pd.Series | None]:
         """Generate one integer-sized household's occupancy result, DHW
         draws and cooking energy. Returns
@@ -467,7 +633,10 @@ class AttributeBuilder:
             num_persons=num_persons, year=weather_year, seed=seed, archetype=archetype,
         )
         equipment_table = _resolve_equipment_table(household, seed, equipment_spec)
-        elec_gen = ElectricityConsumptionProfile(household, equipment=equipment_table, seed=seed)
+        ev_kwargs = ev.household_kwargs() if ev is not None else {}
+        elec_gen = ElectricityConsumptionProfile(
+            household, equipment=equipment_table, seed=seed, **ev_kwargs,
+        )
         result = elec_gen.to_result()
         draws = generate_dhw_draws(
             result.profile,
@@ -487,6 +656,7 @@ class AttributeBuilder:
     def _generate_multi_dwelling_household(
         self, units: float, num_persons_mean: float, archetype: str,
         weather_year: int, seed: Any, equipment_spec: Any,
+        ev: _EVOptions | None = None,
     ) -> tuple[dict[str, pd.Series], pd.Series | None, pd.Series | None, pd.Series | None]:
         """Build a multi-dwelling (AB/MFH) building's occupancy-derived
         profiles from ``n = min(round(units), cap)`` distinct households
@@ -534,6 +704,7 @@ class AttributeBuilder:
 
         q_ig_total: pd.Series | None = None
         elec_total: pd.Series | None = None
+        ev_totals: dict[str, pd.Series] = {}
         nothome_terms: list[pd.Series] = []
         sleeping_terms: list[pd.Series] = []
         cooking_active_any: pd.Series | None = None
@@ -544,12 +715,17 @@ class AttributeBuilder:
         for i, size in enumerate(sizes):
             dwelling_seed = (base_seed + i * _DWELLING_SEED_STRIDE) % _SEED_MODULUS
             result, dhw_liters, dhw_kwh, cooking_kwh = self._generate_household(
-                size, archetype, weather_year, dwelling_seed, equipment_spec,
+                size, archetype, weather_year, dwelling_seed, equipment_spec, ev,
             )
             inputs = to_buem_profiles(result)
 
             q_ig_total = inputs["Q_ig"] if q_ig_total is None else q_ig_total + inputs["Q_ig"]
             elec_total = inputs["elecLoad"] if elec_total is None else elec_total + inputs["elecLoad"]
+            for key in _EV_SERIES:
+                if key in inputs:
+                    ev_totals[key] = (
+                        inputs[key] if key not in ev_totals else ev_totals[key] + inputs[key]
+                    )
             nothome_terms.append(inputs["occ_nothome"])
             sleeping_terms.append(inputs["occ_sleeping"])
             if "cooking_active" in inputs:
@@ -577,6 +753,8 @@ class AttributeBuilder:
         }
         if cooking_active_any is not None:
             buem_inputs["cooking_active"] = cooking_active_any
+        for key, total in ev_totals.items():
+            buem_inputs[key] = (total * scale).rename(key)
 
         if dhw_liters_total is not None:
             dhw_liters_total = (dhw_liters_total * scale).rename("dhw_liters_total")
@@ -651,6 +829,56 @@ class AttributeBuilder:
             "Applied cooking energy balance: carrier=%s gain_fraction=%.2f "
             "cooking=%.1f kWh", carrier, gain_fraction, cooking_annual,
         )
+
+    def _remove_ev_from_meter_total(
+        self, meter_total: pd.Series, ev: _EVOptions | None,
+    ) -> pd.Series:
+        """Appliance load from a metered household total that includes home
+        EV charging.
+
+        The EV charger is outside the conditioned zone, so its energy must
+        leave the series before it is used as an internal gain. Only a
+        measured charging series can be subtracted hour by hour; a
+        simulated one matches the meter statistically but not in timing,
+        so it is refused here rather than producing spurious negative or
+        shifted load.
+        """
+        if ev is None or ev.measured_kw is None:
+            if ev is not None and ev.has_ev is False:
+                return meter_total
+            raise ValueError(
+                "elecLoad_includes_ev requires a measured ev_charging_kW series "
+                "(e.g. a charging log or sub-meter) when the household has an EV; "
+                "set has_ev=false if it has none."
+            )
+        measured = _reindex_or_raise(ev.measured_kw, meter_total.index, _EV_ATTRIBUTE)
+        return subtract_ev_load(meter_total, measured).rename(meter_total.name)
+
+    @staticmethod
+    def _building_ev_series(
+        buem_inputs: dict[str, pd.Series],
+        ev: _EVOptions | None,
+        weather_df: Any,
+    ) -> dict[str, pd.Series]:
+        """The building's EV series keyed by buem attribute name, aligned to
+        the weather index; empty for service buildings. A measured
+        charging series replaces the simulated one, and then only
+        ``ev_charging_kW`` is known: the plugged-in, driving and away
+        series of a simulation would not belong to the measured car."""
+        if ev is not None and ev.measured_kw is not None:
+            found = {_EV_ATTRIBUTE: ev.measured_kw}
+        else:
+            found = {
+                attribute: buem_inputs[key]
+                for key, attribute in _EV_SERIES.items()
+                if key in buem_inputs
+            }
+        aligned: dict[str, pd.Series] = {}
+        for attribute, series in found.items():
+            if isinstance(weather_df, pd.DataFrame) and not weather_df.empty:
+                series = _reindex_or_raise(series, weather_df.index, attribute)
+            aligned[attribute] = series.rename(attribute)
+        return aligned
 
     def generate_electricity_profile(self):
         """Generate Q_ig/elecLoad/occ_nothome/occ_sleeping via occupancy.
@@ -733,7 +961,12 @@ class AttributeBuilder:
             multi_dwelling_inputs: dict[str, pd.Series] | None = None
             units = float(self.merged_attrs.get("residential_units", 1.0) or 1.0)
 
+            ev_options: _EVOptions | None = None
             if building_type in RESIDENTIAL_BUILDING_TYPES:
+                ev_options, equipment_spec = self._resolve_ev_options(
+                    equipment_spec,
+                    multi_dwelling=units > 1.0 and provided_elec_load is None,
+                )
                 num_persons_mean = self._resolve_num_persons(building_type)
                 # Archetype: explicit caller value wins; otherwise a first-pass
                 # building_type-based default (see DEFAULT_ARCHETYPE_BY_BUILDING_TYPE's
@@ -752,17 +985,19 @@ class AttributeBuilder:
                     multi_dwelling_inputs, dhw_liters, dhw_kwh, cooking_kwh = (
                         self._generate_multi_dwelling_household(
                             units, num_persons_mean, archetype, weather_year,
-                            seed, equipment_spec,
+                            seed, equipment_spec, ev_options,
                         )
                     )
                 else:
                     lower_n, upper_n, upper_weight = _bracket_occupancy(num_persons_mean)
                     result, dhw_liters, dhw_kwh, cooking_kwh = self._generate_household(
                         lower_n, archetype, weather_year, seed, equipment_spec,
+                        ev_options,
                     )
                     if upper_weight > 0.0:
                         upper_household = self._generate_household(
                             upper_n, archetype, weather_year, seed, equipment_spec,
+                            ev_options,
                         )
             else:
                 # Non-residential: route through occupancy's ServiceBuildingProfile
@@ -835,14 +1070,21 @@ class AttributeBuilder:
                     # to buem's weather index is typically half-hour-offset
                     # (00:30, 01:30, ... -- interval-midpoint timestamps). to_buem_
                     # profiles()'s internal elec_load reindex is exact-match only,
-                    # so realign here first with the same nearest+tolerance
-                    # approach already used to align buem_inputs onto weather_df
-                    # below, rather than have a realistically-timestamped caller
-                    # series fail with a confusing "does not cover the index"
-                    # error from inside occupancy.
+                    # so realign here first with the same same-hour matching
+                    # used to align buem_inputs onto weather_df below, rather
+                    # than have a realistically-timestamped caller series fail
+                    # with a confusing "does not cover the index" error from
+                    # inside occupancy.
                     provided_elec_load = _reindex_or_raise(
                         provided_elec_load, result.profile.index, "elecLoad"
                     )
+                    # Net meter -> gross use first, then the EV comes out.
+                    if bool(self.merged_attrs.get("elecLoad_net_of_pv", False)):
+                        provided_elec_load = self._add_pv_to_net_meter(provided_elec_load)
+                    if bool(self.merged_attrs.get("elecLoad_includes_ev", False)):
+                        provided_elec_load = self._remove_ev_from_meter_total(
+                            provided_elec_load, ev_options,
+                        )
 
                 buem_inputs = to_buem_profiles(
                     result, floor_area_m2=floor_area_m2, elec_load=provided_elec_load
@@ -895,6 +1137,9 @@ class AttributeBuilder:
                     buem_inputs["Q_ig"] = buem_inputs["Q_ig"] * units
                     if provided_elec_load is None:
                         buem_inputs["elecLoad"] = buem_inputs["elecLoad"] * units
+                    for key in _EV_SERIES:
+                        if key in buem_inputs:
+                            buem_inputs[key] = buem_inputs[key] * units
                     if dhw_liters is not None:
                         dhw_liters = dhw_liters * units
                     if dhw_kwh is not None:
@@ -925,6 +1170,9 @@ class AttributeBuilder:
 
             self.merged_attrs["elecLoad"] = buem_inputs["elecLoad"]
             self.merged_attrs["Q_ig"] = buem_inputs["Q_ig"]
+            self.merged_attrs.update(
+                self._building_ev_series(buem_inputs, ev_options, weather_df)
+            )
             self.merged_attrs["occ_nothome"] = buem_inputs["occ_nothome"]
             self.merged_attrs["occ_sleeping"] = buem_inputs["occ_sleeping"]
             self.merged_attrs["year"] = weather_year  # Force year consistency
@@ -970,7 +1218,7 @@ class AttributeBuilder:
         # generate_electricity_profile), hence included here too rather than
         # assumed always-present like the first three.
         for key in ("Q_ig", "occ_nothome", "occ_sleeping", "dhw_liters",
-                    "cooking_active", "cooking_kwh"):
+                    "cooking_active", "cooking_kwh", "pv_kW", *_EV_SERIES.values()):
             if (
                 key in self.merged_attrs
                 and isinstance(self.merged_attrs[key], pd.Series)

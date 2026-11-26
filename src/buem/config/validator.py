@@ -95,6 +95,8 @@ def validate_cfg(cfg: dict[str, Any]) -> list[str]:
                         except (TypeError, ValueError):
                             issues.append(f"components.{comp}.elements[{idx}].U invalid: {u_e}")
 
+    issues.extend(validate_installations(cfg))
+
     # weather presence/length sanity check (optional)
     weather = cfg.get("weather")
     if weather is None:
@@ -108,4 +110,48 @@ def validate_cfg(cfg: dict[str, Any]) -> list[str]:
             # not lengthable (e.g. a scalar) -- skip the deep length check here
             logger.debug("weather value of type %s is not lengthable; skipping length check", type(weather))
 
+    return issues
+
+
+# Existing on-site installations: (flag, its capacity attribute).
+INSTALLATIONS = (("has_pv", "pv_capacity_kwp"), ("has_battery", "battery_capacity_kwh"))
+
+
+def validate_installations(cfg: dict[str, Any]) -> list[str]:
+    """Issues with the on-site installation attributes: has_pv/has_battery
+    must be booleans; a capacity must be a positive number and needs its
+    flag set (AttributeBuilder sets the flag when only the capacity was
+    sent); elecLoad_net_of_pv needs a provided elecLoad and the building's
+    PV output (pv_kW), and no battery."""
+    issues: list[str] = []
+    for flag, capacity_key in INSTALLATIONS:
+        has = cfg.get(flag, False)
+        if not isinstance(has, bool):
+            issues.append(f"{flag} must be true or false, got {has!r}")
+            continue
+        capacity = cfg.get(capacity_key)
+        if capacity is None:
+            continue
+        if isinstance(capacity, bool):
+            issues.append(f"{capacity_key} must be a number, got {capacity!r}")
+            continue
+        try:
+            value = float(capacity)
+        except (TypeError, ValueError):
+            issues.append(f"{capacity_key} must be a number, got {capacity!r}")
+            continue
+        if not value > 0:
+            issues.append(f"{capacity_key} must be > 0, got {capacity!r}")
+        elif not has:
+            issues.append(f"{capacity_key} is set but {flag} is false")
+    if cfg.get("elecLoad_net_of_pv"):
+        if not cfg.get("use_provided_elecLoad"):
+            issues.append("elecLoad_net_of_pv needs use_provided_elecLoad")
+        if cfg.get("pv_kW") is None:
+            issues.append("elecLoad_net_of_pv needs pv_kW (the building's PV output to add back)")
+        if cfg.get("has_battery"):
+            issues.append(
+                "elecLoad_net_of_pv cannot be used with has_battery: the battery's "
+                "charging and discharging are hidden in the net meter reading"
+            )
     return issues

@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pvlib
 from dotenv import load_dotenv
-from scipy.sparse import lil_matrix, vstack
+from scipy.sparse import csr_matrix, lil_matrix, vstack
 
 from buem.config.validator import validate_cfg
 from buem.thermal import dhw_cooking
@@ -350,6 +350,14 @@ class ModelBUEM:
         H_ve = A_ref * h_room * rho_air * C_air * (n_air_inf + n_air_use) / 3600.0
         self.bH.setdefault("Ventilation", {})["Original"] = H_ve
 
+        # Optional summer window ventilation (night flushing): the largest
+        # *extra* conductance opening windows can add. 0 (default) = off,
+        # and the LP is then exactly the one without it. See sim_model.
+        n_window = float(self.cfg.get("n_air_window_max", 0.0) or 0.0)
+        if n_window < 0:
+            raise ValueError(f"n_air_window_max cannot be negative, got {n_window}")
+        self.bH_window_max = A_ref * h_room * rho_air * C_air * n_window / 3600.0
+
     def _resolve_opaque_element_u(self, comp_name: str, e: dict) -> float:
         """U-value [W/m²K] to use for one opaque element's own solar-gain
         term (Walls/Doors/Roof; Windows use ``g_gl``, not U, so this
@@ -569,8 +577,15 @@ class ModelBUEM:
                 )
 
             gwin = float(w["g_gl"]) if "g_gl" in w else self.g_gl
+            # External shading by obstacles (ISO 13790 eq. 43, F_sh,ob):
+            # the same factor the opaque terms below already apply --
+            # F_sh_vert for facade glazing, F_sh_hor for roof/horizontal
+            # glazing (tilt below 45 deg, or the TABULA skylight element).
+            tilt = w.get("tilt")
+            is_horizontal = (tilt is not None and float(tilt) < 45.0) or wid == "win_horizontal"
+            f_sh = self.F_sh_hor if is_horizontal else self.F_sh_vert
             # Q [kW] = area * g_gl * irr * fraction factors - small thermal sky term handled below
-            qwin = poa * area * gwin * (1.0 - self.F_f) * self.F_w
+            qwin = poa * area * gwin * (1.0 - self.F_f) * self.F_w * f_sh
             win_list.append(qwin)
 
         if not win_list:
@@ -1509,26 +1524,98 @@ class ModelBUEM:
         # Build 5R1C physics constraint matrix A_eq (3*n x 4*n)
         A_eq, b_eq, milp_meta = self._addConstraints()
 
+        H_window = float(getattr(self, "bH_window_max", 0.0))
         if use_milp:
+            if H_window > 0:
+                raise ValueError(
+                    "n_air_window_max (window ventilation) is only implemented "
+                    "in the LP path; run without use_milp or set it to 0."
+                )
             return self._build_and_solve_milp(milp_meta)
 
-        # ── Single-pass ISO 13790 dead-band LP ──────────────────────────────────
-        # Variables: x = [T_air(0..n-1), T_m(0..n-1), T_sur(0..n-1), Q_HC(0..n-1)]
-        # Equality:  3 physics equations per timestep
-        # Bounds:    comfortT_lb <= T_air <= comfortT_ub  (dead-band comfort constraint)
-        # Objective: minimize sum(|Q_HC|)  (L1 norm → LP)
         n = len(self.timeIndex)
+        T_e_arr = np.asarray(milp_meta["T_e"], dtype=float)
+        if H_window > 0:
+            # Summer window ventilation, two passes. Pass 1 is the plain LP
+            # (no windows). Windows are then available in every hour where
+            # opening them can only cool: outdoor air at or below the lower
+            # comfort bound, or at least WINDOW_MIN_DT_K below pass 1's
+            # indoor temperature. See _solve_lp for the formulation.
+            x_plain, _ = self._solve_lp(A_eq, b_eq, n, T_e_arr)
+            self.Q_HC_no_window = x_plain[3*n:4*n].copy()
+            eligible = (T_e_arr <= self.bT_comf_lb) | (
+                x_plain[0:n] >= T_e_arr + self.WINDOW_MIN_DT_K
+            )
+            x_val, q_window = self._solve_lp(
+                A_eq, b_eq, n, T_e_arr, H_window=H_window, eligible=eligible
+            )
+        else:
+            x_val, q_window = self._solve_lp(A_eq, b_eq, n, T_e_arr)
+
+        self.T_air = x_val[0:n]
+        self.T_m = x_val[n:2*n]
+        self.T_sur = x_val[2*n:3*n]
+        self.Q_HC = x_val[3*n:4*n]
+
+        # Snap near-zero Q_HC to exactly zero (numerical noise in dead-band hours)
+        self.Q_HC[np.abs(self.Q_HC) < 1e-3] = 0.0  # |Q_HC| < 1 W → 0
+
+        # Split net HVAC by sign: positive = heating, negative = cooling
+        self.heating_load = np.maximum(0.0, self.Q_HC)
+        self.cooling_load = np.minimum(0.0, self.Q_HC)
+        # Heat removed by window ventilation [kW, >= 0]; zeros when off.
+        if q_window is not None:
+            self.window_vent_load = np.maximum(0.0, q_window)
+            self.window_vent_load[self.window_vent_load < 1e-3] = 0.0
+        else:
+            self.window_vent_load = np.zeros(n)
+
+        self._readResults()
+        return
+
+    # Window ventilation is offered in an hour only when the window-free
+    # indoor temperature is at least this much above the outdoor air.
+    WINDOW_MIN_DT_K = 1.0
+
+    def _solve_lp(self, A_eq, b_eq, n, T_e_arr, H_window=0.0, eligible=None):
+        """Solve the ISO 13790 dead-band LP; returns ``(x, Q_window)``.
+
+        Variables: ``x = [T_air, T_m, T_sur, Q_HC]`` (each length n).
+        Equality: 3 physics equations per timestep. Bounds:
+        ``comfortT_lb <= T_air <= comfortT_ub``. Objective: ``min sum|Q_HC|``
+        (L1 norm, so Q_HC = 0 whenever the dead band holds passively).
+
+        With ``H_window > 0``, window ventilation removes heat from the air
+        node: ``Q_window(i) = H_w(i) * (T_air(i) - T_e(i))`` with the opening
+        ``0 <= H_w(i) <= H_window`` chosen by the occupant. Written as
+        ``0 <= Q_window <= H_window * (T_air - T_e)`` it is linear, and exact
+        as long as T_air >= T_e, which the constraint itself enforces in
+        the ``eligible`` hours (elsewhere Q_window = 0). Eligible hours are
+        chosen so that holds without forcing anything (see sim_model);
+        whether heating moved is kept in ``Q_HC_no_window`` for checking.
+        A tiny penalty keeps windows shut when opening them saves nothing.
+        """
         x = cp.Variable(4 * n)
-        # L1 objective: minimize total |Q_HC| (= total HVAC energy).
-        # Sparse solution: Q_HC = 0 (dead-band) whenever physics admits T_air ∈ [lb, ub].
-        # This matches ISO 13790 annual energy accounting (total kWh, not peak kW).
-        obj = cp.Minimize(cp.norm1(x[3*n:4*n]))
+        objective = cp.norm1(x[3*n:4*n])
+        q_window = None
+        physics = A_eq @ x == b_eq
+        extra = []
+        if H_window > 0:
+            q_window = cp.Variable(n, nonneg=True)
+            air_rows = csr_matrix(
+                (np.ones(n), (3 * np.arange(n), np.arange(n))), shape=(3 * n, n)
+            )
+            physics = A_eq @ x + air_rows @ q_window == b_eq
+            mask = np.asarray(eligible, dtype=float)
+            extra.append(q_window <= cp.multiply(mask * H_window, x[0:n] - T_e_arr))
+            objective = objective + 1e-3 * cp.sum(q_window)
         constraints = [
-            A_eq @ x == b_eq,
+            physics,
             x[0:n] >= self.bT_comf_lb,
             x[0:n] <= self.bT_comf_ub,
+            *extra,
         ]
-        prob = cp.Problem(obj, constraints)
+        prob = cp.Problem(cp.Minimize(objective), constraints)
         # ASCII-only: a non-cp1252 character here (e.g. U+2208 "element of")
         # raises UnicodeEncodeError and aborts the solve on a default Windows
         # console, which doesn't set stdout to UTF-8.
@@ -1551,22 +1638,8 @@ class ModelBUEM:
                 f"LP solver failed (status={prob.status}, solver={solver_used}). "
                 "Check building parameters (U-values, areas) and comfort bounds."
             )
-
-        x_val = np.asarray(x.value)
-        self.T_air = x_val[0:n]
-        self.T_m = x_val[n:2*n]
-        self.T_sur = x_val[2*n:3*n]
-        self.Q_HC = x_val[3*n:4*n]
-
-        # Snap near-zero Q_HC to exactly zero (numerical noise in dead-band hours)
-        self.Q_HC[np.abs(self.Q_HC) < 1e-3] = 0.0  # |Q_HC| < 1 W → 0
-
-        # Split net HVAC by sign: positive = heating, negative = cooling
-        self.heating_load = np.maximum(0.0, self.Q_HC)
-        self.cooling_load = np.minimum(0.0, self.Q_HC)
-
-        self._readResults()
-        return
+        q = None if q_window is None else np.asarray(q_window.value)
+        return np.asarray(x.value), q
 
     def _addDhwCooking(self):
         """

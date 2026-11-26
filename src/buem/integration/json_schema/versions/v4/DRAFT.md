@@ -108,6 +108,26 @@ asks that same pass surfaced:
   these fields (it hasn't) -- only that buem's own runtime happens to
   read them if a v3-format client sends them, same caveat as `year`/
   `weather_provider` before it.
+- `building.has_ev`, `building.ev_ownership_probability`,
+  `building.ev_charger_kw` (new optional fields, additive/MINOR,
+  2026-11-23). occupancy now models the household electric vehicle as its
+  own sub-model (trips, state of charge, plug-in behaviour) rather than as
+  an appliance row, and keeps its charging out of the internal-gain
+  electricity load. `equipment.ev_charger` is removed from the equipment
+  property list accordingly (a field removal, but only from this unagreed
+  draft); buem's runtime still accepts it from older payloads and maps it
+  to `has_ev` with a deprecation warning.
+- `building.has_pv`, `building.pv_capacity_kwp`, `building.has_battery`,
+  `building.battery_capacity_kwh` (new optional fields, additive/MINOR,
+  2026-11-24). Existing on-site installations: a rooftop PV system and a
+  stationary home battery. Building facts only: buem is a demand model
+  and computes neither PV output nor battery operation (PV generation is
+  conversion-technologies', consistent with EnerPlanET's pysam-pv), and
+  neither changes the thermal results. A capacity without its flag
+  implies the flag. `geojson_validator.py` forwards these and the
+  `has_ev` fields from a request's `building` object (user sign-off
+  2026-11-24); a v3 request carrying them is forwarded too, although the
+  live v3 schema does not list them.
 - `building.equipment` (new optional field, additive/MINOR, 2026-08-14,
   **reshaped 2026-08-14 same day** from an initial `{mode: "include"|
   "exclude", items: [...]}` draft to a per-item boolean map --

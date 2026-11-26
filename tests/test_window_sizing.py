@@ -19,6 +19,18 @@ from buem.config.building_registry import DEFAULT_WINDOW_TO_WALL_RATIO
 
 LOENEN = "src/buem/data/buildings/netherlands/Loenen"
 
+# The Loenen building data is local only (not in the repository): skip the
+# tests that read it when it is absent, as on CI.
+_loenen_missing_reason = None
+try:
+    CsvBuildingSource(LOENEN)
+except FileNotFoundError as exc:
+    _loenen_missing_reason = str(exc)
+
+requires_loenen_data = pytest.mark.skipif(
+    _loenen_missing_reason is not None, reason=_loenen_missing_reason or ""
+)
+
 
 def test_ratio_is_window_over_gross_facade():
     row = pd.Series({"A_Window_1": 20.0, "A_Window_2": 5.0, "A_Wall_1": 60.0,
@@ -31,6 +43,7 @@ def test_ratio_none_without_areas():
     assert tabula_window_to_wall_ratio(pd.Series({"A_Window_1": 5.0})) is None
 
 
+@requires_loenen_data
 def test_nl_typology_ratios_by_type():
     """TABULA NL: detached clearly below the old 0.5 default, every
     residential archetype inside (0, 0.6)."""
@@ -43,6 +56,7 @@ def test_nl_typology_ratios_by_type():
     assert all(0 < r < 0.6 for r in ratios.values() if r is not None)
 
 
+@requires_loenen_data
 def test_lod2_mapper_uses_archetype_ratio():
     from buem.analysis.provider_comparison import building_attrs_from
     from buem.buildings.mapping.lod2_mapper import LOD2Mapper

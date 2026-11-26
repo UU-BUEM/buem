@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.6.1] - 2026-11-26
+
+### Fixed
+
+- CI: the two window-sizing tests that read the local Loenen building data
+  (`test_nl_typology_ratios_by_type`, `test_lod2_mapper_uses_archetype_ratio`)
+  now skip when that data is absent, as the other Netherlands-data tests do.
+  v6.6.0's tagged commit failed CI on them; the package code of v6.6.0 and
+  v6.6.1 is identical, so model output does not change.
+
 ## [6.6.0] - 2026-11-26
 
 Requires occupancy 7.0.0 (unreleased): `has_ev`, `subtract_ev_load` and

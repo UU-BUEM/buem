@@ -197,13 +197,12 @@ def _process_one_building_hourly(
     summary row and its full hourly trajectory (``None`` if it errored or
     was skipped). ``ev_attrs`` (e.g. ``{"ev_ownership_probability": 0.2}``)
     is merged into every building's attributes."""
+    from buem.analysis import batch as _batch_mod
     from buem.analysis.building_selection import wall_exposure
     from buem.analysis.provider_comparison import building_attrs_from
     from buem.config.cfg_building import CfgBuilding
     from buem.integration.scripts.attribute_builder import AttributeBuilder
     from buem.thermal.model_buem import ModelBUEM
-
-    from buem.analysis import batch as _batch_mod
 
     row: dict[str, Any] = {col: None for col in _SUMMARY_COLUMNS}
     row["building_feature_id"] = building_feature_id

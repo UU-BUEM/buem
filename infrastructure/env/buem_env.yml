@@ -130,5 +130,5 @@ dependencies:
     # weather is COMPULSORY (2026-08-03): every T/GHI/DHI/DNI attribute
     # comes from its real per-location get_point_weather() fetch, no
     # bundled/local-file fallback -- buem will not import without it.
-    - occupancy @ git+https://github.com/UU-BUEM/occupancy.git@v6.1.2
+    - occupancy @ git+https://github.com/UU-BUEM/occupancy.git@v7.0.0
     - weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@v1.10.2

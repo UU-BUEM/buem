@@ -64,7 +64,7 @@ dependencies = [
     # (PEP 508), pinned to a released tag so that each buem release resolves
     # to fixed occupancy code -- keep in step with
     # infrastructure/env/buem_env.yml.
-    "occupancy @ git+https://github.com/UU-BUEM/occupancy.git@v6.1.2",
+    "occupancy @ git+https://github.com/UU-BUEM/occupancy.git@v7.0.0",
 ]
 
 [project.optional-dependencies]

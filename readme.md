@@ -57,7 +57,7 @@ without one**. Either:
 neither is reachable.
 
 `infrastructure/env/buem_env.yml` and `pyproject.toml` pin `occupancy` and
-`weather` to released tags (currently `occupancy` v6.1.2, `weather` v1.10.2),
+`weather` to released tags (currently `occupancy` v7.0.0, `weather` v1.10.2),
 so each BuEM release runs against fixed versions of both. Re-run
 `.\setup.ps1 env-update` / `setup.bat env-update` (or `conda env update -n
 buem_env -f infrastructure/env/buem_env.yml --prune`) after a `git pull`

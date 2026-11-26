@@ -7,6 +7,129 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.6.0] - 2026-11-26
+
+Requires occupancy 7.0.0 (unreleased): `has_ev`, `subtract_ev_load` and
+the separate EV charging series exist only there. Bump the `occupancy`
+pin in `pyproject.toml` and `infrastructure/env/buem_env.yml` once it is
+tagged.
+
+### Added
+
+- **Summer window ventilation** (`n_air_window_max`, extra air changes per
+  hour from opening windows; default 0 = off, results unchanged). The LP
+  may remove heat `Q = H_w (T_air - T_e)` with `0 <= H_w <= H_window`
+  wherever that saves cooling. To stay linear, windows are offered only in
+  hours where ventilation can only cool: outdoor air at or below
+  `comfortT_lb`, or at least 1 K below the indoor temperature of a
+  window-free first pass (so the solve runs twice when on). Heating is
+  never raised. `ModelBUEM.window_vent_load` holds the heat removed;
+  `Q_HC_no_window` the first pass. LP path only (the MILP path raises).
+  Tests: `tests/test_window_ventilation.py`.
+- **Building location in the region summary**: `scripts/run_region_hourly.py`
+  writes `bag_pand_id`, `latitude` and `longitude` to the summary Parquet.
+  These are the footprint centroid in WGS84, decoded from
+  `building_centroid_geom` by `geometry_utils.building_lat_lon` and rounded to
+  6 decimals. All three are null when the building table lacks them. They are
+  filled even for skipped or errored buildings, for downstream spatial joins
+  such as attaching buildings to a low-voltage grid model.
+- **Household electric vehicle attributes**: `has_ev` (true by default;
+  false; or null for unknown ownership, drawn per dwelling from
+  `ev_ownership_probability`), `ev_ownership_probability`,
+  `ev_charger_kw` (home charger power, default 7.4 kW) and `ev_config`
+  (overrides of occupancy's EV parameters, e.g. survey-derived
+  distributions). A multi-dwelling building without an explicit `has_ev`
+  draws ownership per dwelling.
+- **`ev_charging_kW`**: the building's home EV charging (occupancy's
+  simulation, or a measured series supplied in the same attribute). It is
+  reported separately from `elecLoad` and never treated as an internal
+  heat gain, because the charger sits outside the conditioned zone. The
+  hourly regional export (`scripts/run_region_hourly.py`) adds an `ev_kW`
+  column and `ev_kWh` to its summary; `buem.analysis.batch` adds `ev_kWh`.
+  A building's total metered electricity is `elec_kW + ev_kW`.
+- **`elecLoad_includes_ev`**: with `use_provided_elecLoad`, declares the
+  supplied series a meter total that includes EV charging. The measured
+  `ev_charging_kW` is subtracted before the series is used as an internal
+  gain. A household with an EV but no measured charging series is
+  refused, because a simulated series matches a meter only on average.
+- **`ev_stored_kWh`**: energy in the EV battery at the end of each hour,
+  exported as an `ev_stored_kWh` column by `scripts/run_region_hourly.py`.
+  An energy-system model can start and end its battery at the simulated
+  car's levels, so its optimised charging describes the same car.
+- v4 draft schema: `building.has_ev`, `building.ev_ownership_probability`,
+  `building.ev_charger_kw` (see `versions/v4/DRAFT.md`). The live v3
+  schema and its runtime validation are unchanged.
+- **Existing PV and home battery attributes**: `has_pv`,
+  `pv_capacity_kwp`, `has_battery` and `battery_capacity_kwh` (any
+  building type; default: none). Building facts only: buem is a demand
+  model and computes neither PV output nor battery operation (PV
+  generation belongs to conversion-technologies, consistent with
+  EnerPlanET's pysam-pv), and the thermal results do not change. A flag
+  must be a boolean, a capacity a positive number; a capacity sent
+  without its flag implies the flag.
+- `elecLoad_net_of_pv` with a supplied `pv_kW` series (inverter data or a
+  modelled PV profile): with `use_provided_elecLoad`, a net meter reading
+  (import minus export) becomes gross use by adding `pv_kW` back, before
+  it is used as internal gains. Refused with `has_battery` (the battery's
+  flows are hidden in the net reading).
+- `scripts/run_region_hourly.py`: summary columns `has_pv`,
+  `pv_capacity_kwp`, `has_battery`, `battery_capacity_kwh` (read from the
+  building table when it has those columns) and `roof_faces` (JSON list
+  of the roof's faces with tilt, azimuth and area: envelope geometry for
+  a PV model downstream).
+- `geojson_validator.py` forwards `has_ev`, `ev_ownership_probability`,
+  `ev_charger_kw`, `has_pv`, `pv_capacity_kwp`, `has_battery` and
+  `battery_capacity_kwh` from a request's `building` object into the
+  building attributes (v4 draft schema lists them; a v3 request carrying
+  them is forwarded too).
+
+### Changed
+
+- **occupancy pinned to v7.0.0** (was v6.1.2) in `pyproject.toml` and
+  `infrastructure/env/buem_env.yml`. Model output changes: occupancy 7
+  keeps EV charging out of `total_power_kwh`, so `elecLoad` (and the
+  internal gains from it) no longer include home EV charging; the EV series
+  come through separately (`ev_charging_kw`, ...).
+- `equipment.ev_charger` is no longer an appliance id
+  (`HOUSEHOLD_EQUIPMENT_TYPES` and the v4 draft's equipment list drop it,
+  matching occupancy's registry). A request that still sends it is
+  translated to `has_ev`, with a deprecation warning.
+- `test_multi_dwelling_total_energy_matches_single_household_scaled`
+  compares the multi-dwelling total against the mean of eight single
+  households instead of one, which made the test depend on the luck of a
+  single stochastic draw.
+
+### Fixed
+
+- **LOD2 buildings were over-glazed.** Every exposed wall got
+  `DEFAULT_WINDOW_TO_WALL_RATIO` (0.5) as glazing. That figure came from
+  TABULA NL's window / *net* wall ratio averaged over all archetypes
+  (apartment blocks reach 0.8-1.0), but it was applied to *gross* LOD2
+  walls, so detached houses got 2-2.5x TABULA's glazing. In Loenen the
+  median window solar gain was 27 MWh/yr per dwelling and cooling at
+  26 degC about 10 MWh/yr, rising with insulation. `LOD2Mapper` now
+  uses the archetype's own TABULA glazing share of the gross facade
+  (`archetype_spec.tabula_window_to_wall_ratio`; ~0.17-0.23 detached,
+  0.30-0.39 terraced), still spread over every exposed wall with its
+  real azimuth. The default stays for service buildings and the live
+  request path. Six Loenen test dwellings: cooling -80%, heating -6%.
+  The CBS validations were run with the old sizing.
+- **Window solar gains ignored external shading.** The opaque terms
+  applied `F_sh_vert`/`F_sh_hor` (ISO 13790 `F_sh,ob`); windows did not.
+  Window gains now use `F_sh_vert` (facade) or `F_sh_hor` (tilt < 45 deg
+  or the horizontal skylight element).
+- **Occupancy profiles were one hour early against the weather.** Model
+  results change for every building. occupancy labels an hour by its
+  start (00:00), the weather by its midpoint (00:30), and the alignment
+  took the nearest label. 00:30 is as near to 01:00 as to 00:00, and
+  pandas breaks that tie towards the later label, so each weather hour
+  received the next hour's internal gains, electricity, presence, sleep,
+  hot water, cooking and EV values. The year's first hour was dropped
+  and its last hour repeated, which also made the EV series' last hour
+  unbalanced: charging was counted twice while the stored energy stayed
+  flat. `AttributeBuilder` and the default profile in `cfg_attribute.py`
+  now match each weather timestamp to the hour it falls in.
+
 ## [6.5.0] - 2026-11-20
 
 Model results change for Dutch buildings: reference floor area and

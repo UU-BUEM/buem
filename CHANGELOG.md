@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- Loenen CBS validation rerun with buem 6.6.1 and occupancy 7.0.0
+  (`docs/source/validation/envelope_and_refurbishment.rst`, "Rerun
+  2026-11-27"; outputs in `validation/NL/cbs/v5/`). Heating ratio against
+  CBS 85140NED 2.58 -> 2.43 (window sizing); the electricity ratio
+  0.99 -> 0.88 is mainly because EV charging is no longer in `elecLoad`.
+
 ## [6.6.1] - 2026-11-26
 
 ### Fixed

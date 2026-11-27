@@ -254,6 +254,96 @@ floor area, while the CBS figure rises with dwelling size, so the SFH
 miss is structural rather than a level error. Both gaps point the same
 way: too little internal gain and too much envelope loss.
 
+Rerun 2026-11-27: window sizing and occupancy 7.0.0
+---------------------------------------------------
+
+The table above dates from 2026-09-01. The same configuration was rerun
+twice since: on 2026-11-20 (buem before 6.6.0, occupancy 6.x,
+``results/loenen_v4.parquet``) and on 2026-11-27 (buem 6.6.1, occupancy
+7.0.0, ``results/loenen_v5.parquet``; 1,335 buildings, 0 errors, 669 s on
+18 workers). Between those two runs two things changed:
+
+- **Window sizing (buem 6.6.0).** On LOD2 geometry, windows are sized
+  from each TABULA archetype's glazing share instead of 50% of every
+  wall, and shading is applied. Cooling demand drops a lot; heating drops
+  a little because there is less glass to lose heat through. Summer window
+  ventilation (``n_air_window_max``) stays at 0 here: the scenario runs
+  set it, the validation does not.
+- **EV charging leaves** ``elecLoad`` **(occupancy 7.0.0).** It is now
+  reported in its own column. buem's electricity therefore no longer
+  includes home charging, and its internal gains no longer include it
+  either, so heating rises a little.
+
+Both runs compared against CBS 85140NED 2019 (national, era-resolved),
+1,318 buildings, n-weighted per dwelling:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Variant
+     - n
+     - CBS kWh/dwelling
+     - buem 2026-11-20
+     - buem 2026-11-27
+     - Ratio 2026-11-20
+     - Ratio 2026-11-27
+   * - 1 — as-built
+     - 924
+     - 11,656
+     - 39,116
+     - 36,943
+     - 3.36
+     - **3.17**
+   * - 2 — standard refurbishment
+     - 313
+     - 11,254
+     - 9,010
+     - 8,696
+     - 0.80
+     - **0.77**
+   * - 3 — nZEB refurbishment
+     - 81
+     - 12,497
+     - 5,589
+     - 4,809
+     - 0.45
+     - **0.38**
+   * - All, heating
+     - 1,318
+     -
+     -
+     -
+     - 2.58
+     - **2.43**
+   * - All, electricity
+     - 1,318
+     -
+     -
+     -
+     - 0.99
+     - **0.88**
+
+Region totals (1,335 buildings): heating 43.2 → 40.9 GWh (−5.3%),
+cooling 28.1 → 10.0 GWh (−64%), electricity 4.73 → 4.18 GWh (−11.7%),
+DHW unchanged.
+
+Against the municipal table (CBS 81528NED, Apeldoorn, 2018), the
+count-weighted heating ratio for the two largest groups moves from
+2.61 → 2.43 (detached SFH) and 2.43 → 2.25 (semi-detached SFH); terraced
+houses barely change (2.09 → 2.07, 1.97 → 1.98).
+
+What it means:
+
+- The window fix moves heating in the right direction, but only by about
+  6%. The finding of this page stands: the gap is carried by the as-built
+  bucket and by refurbishment coverage, not by the windows.
+- The electricity ratio falling to 0.88 is mostly a change of definition,
+  not a model error. CBS's household electricity includes charging at
+  home; buem's ``elecLoad`` no longer does. A like-for-like comparison has
+  to add ``ev_charging_kw`` back for households with an EV.
+
+The outputs of both comparisons are in ``validation/NL/cbs/v5/``.
+
 Reproducing these results
 -------------------------
 
